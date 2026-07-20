@@ -1,3 +1,4 @@
+<b>Mobile HotSpot</b><br>
 1 -Advanced Band & Channel Control: Full support for 2.4GHz, 5GHz, and 6GHz (Wi-Fi 6E/7) bands. Manually select your preferred channels to avoid congestion and optimize performance.<br>
 2- Ultra-Wide Bandwidths: Configure channel bandwidths up to 320MHz (Auto, 20, 40, 80, 160, 320) for maximum throughput.<br>
 Multi-Link Operation (MLO): Enable next-generation Wi-Fi 7 Multi-Link Operation(Pending at Amdroid OS level) to allow compatible client devices to connect over multiple bands simultaneously for ultra-low latency and high speeds.<br>
