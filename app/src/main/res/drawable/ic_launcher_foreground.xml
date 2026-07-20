@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Wi-Fi 7 Multi-Link concentric outer band 1 -->
+    <path
+        android:pathData="M30,38 C42,26 66,26 78,38"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:strokeColor="#FF3B30" />
+
+    <!-- Wi-Fi 7 Multi-Link concentric outer band 2 -->
+    <path
+        android:pathData="M37,47 C46,38 62,38 71,47"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:strokeColor="#FF9500" />
+
+    <!-- Wi-Fi 7 Multi-Link concentric outer band 3 -->
+    <path
+        android:pathData="M44,56 C50,50 58,50 64,56"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:strokeColor="#FFCC00" />
+
+    <!-- Central core transmitter - glowing point -->
+    <path
+        android:pathData="M54,69 A 5 5 0 1 1 53.99,69"
+        android:fillColor="#FF3B30" />
+
+    <!-- Solid base foundation representing absolute system/root control -->
+    <path
+        android:pathData="M42,80 L66,80 L54,69 Z"
+        android:fillColor="#FFFFFF" />
+
+    <!-- Glowing futuristic accents -->
+    <path
+        android:pathData="M24,84 L84,84"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeColor="#FF3B30" />
+
+</vector>
