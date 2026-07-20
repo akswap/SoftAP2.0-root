@@ -1,21 +1,9 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
-
-# Run and deploy your AI Studio app
-
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/9223a8b5-a941-4585-bd16-b9ddcfe05f3e
-
-## Run Locally
-
-**Prerequisites:**  [Android Studio](https://developer.android.com/studio)
-
-
-1. Open Android Studio
-2. Select **Open** and choose the directory containing this project
-3. Allow Android Studio to fix any incompatibilities as it imports the project.
-4. Create a file named `.env` in the project directory and set `GEMINI_API_KEY` in that file to your Gemini API key (see `.env.example` for an example)
-5. Remove this line from the app's `build.gradle.kts` file: `signingConfig = signingConfigs.getByName("debugConfig")`
-6. Run the app on an emulator or physical device
+1- Root Required <br>
+2- Speed depend on Mobile Hardware <b>(Max 2882Mbps)</b> snapdragon 8 gen 3,4 Elite<br>
+3- (Max 2402Mbps) on WIFI-6 supported mobile<br>
+4- If Your Mobile Support Wifi 7 (Hardware) <br>
+then You need to install (magisk-module-wifi7) <br>From here https://github.com/AndroPlus-org/magisk-module-wifi7<br>
+5- 6Ghz band supported if Your Country Allowded<br>
+6- 2.4Ghz Max speed is <b>688Mbps</b> (WiFI-7) 8Gen 3 , 8Gen4 ,8Gen Elite <br>
+7 - Download SoftAP.apk File in "reliese" <br>
+8- install & Enjoy
