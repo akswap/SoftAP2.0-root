@@ -1,3 +1,5 @@
+<b>2.4Ghz Max (Link Speed 688Mbps) Real 250+Mbps  5Ghz Max (Link speed 2882Mbps) Real 1Gbps </b>
+
 <b>Automatic Country/Region Selection Based on Bands<br></b>
 Automatically switches country/region codes based on the selected frequency bands:<br)
 JP (Japan) is selected when only the 6GHz band is enabled.<br>
