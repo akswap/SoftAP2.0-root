@@ -1,0 +1,1 @@
+sed -i 's/    fun requestWriteSettingsPermission(context: Context) {    private fun updateRealActiveChannels() {/    private fun updateRealActiveChannels() {/g' ./app/src/main/java/com/example/ui/HotspotViewModel.kt

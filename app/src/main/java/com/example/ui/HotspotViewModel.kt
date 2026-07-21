@@ -26,6 +26,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 
 class HotspotViewModel(
     application: Application,
@@ -39,17 +41,20 @@ class HotspotViewModel(
     val band2g = MutableStateFlow(false)
     val band5g = MutableStateFlow(true)
     val band6g = MutableStateFlow(false)
-    val mloEnabled = MutableStateFlow(false)
+    val mloEnabled = MutableStateFlow(true)
     val channelBandwidth = MutableStateFlow("160") // Auto, 20, 40, 80, 160, 320
     val selectedRegion = MutableStateFlow("US") // IN, US, UK, DE, CN, JP
     
     val channel5g = MutableStateFlow("Auto")
     val channel6g = MutableStateFlow("Auto")
 
+    val showNetworkSourceWarning = MutableStateFlow(false)
+
     // Write Settings Permission state
     private val _hasWriteSettingsPermission = MutableStateFlow(false)
     val hasWriteSettingsPermission = _hasWriteSettingsPermission.asStateFlow()
     val forceDirectCli = kotlinx.coroutines.flow.MutableStateFlow(true)
+    val forceWifi7 = kotlinx.coroutines.flow.MutableStateFlow(true)
 
     // VPN Hotspot Routing states
     private val _isVpnRoutingActive = MutableStateFlow(false)
@@ -118,6 +123,7 @@ class HotspotViewModel(
                     _activeBands.value = "${displayBands.joinToString(" + ")} | ${channelBandwidth.value}MHz"
                     _lastTerminalOutput.value = "System Hotspot turned ON."
                     refreshConnectedClients()
+                    updateRealActiveChannels()
                 } else if (state == 11) { // WIFI_AP_STATE_DISABLED
                     _isHotspotActive.value = false
                     _isHotspotLoading.value = false
@@ -282,6 +288,161 @@ class HotspotViewModel(
         }
     }
 
+    private fun updateRealActiveChannels() {
+        viewModelScope.launch(Dispatchers.IO) {
+            var freqs = emptyList<Int>()
+            var bandwidth = channelBandwidth.value
+            var standard: String? = null
+            for (i in 1..8) {
+                delay(2000) // Poll every 2 seconds
+                if (_isRootAvailable.value == true) {
+                    // Try parsing from SoftApInfo specifically first to avoid client connection frequencies
+                    val softApInfoResult = RootExecutor.executePersistentCommand("dumpsys wifi | grep -i SoftApInfo")
+                    if (softApInfoResult.success && softApInfoResult.output.isNotBlank()) {
+                        Log.d("HotspotViewModel", "DUMPSYS SOFTAPINFO: ${softApInfoResult.output}")
+                        val infoBlocks = Regex("SoftApInfo\\s*\\{([^}]+)\\}", RegexOption.IGNORE_CASE).findAll(softApInfoResult.output).toList()
+                        if (infoBlocks.isNotEmpty()) {
+                            val parsedFreqs = mutableListOf<Int>()
+                            var parsedBandwidth = bandwidth
+                            var parsedStandard: String? = null
+                            for (block in infoBlocks) {
+                                val blockStr = block.groupValues[1]
+                                val freqMatch = Regex("frequency\\s*=\\s*([0-9]+)", RegexOption.IGNORE_CASE).find(blockStr)
+                                val f = freqMatch?.groupValues?.get(1)?.toIntOrNull()
+                                if (f != null && f > 0) {
+                                    parsedFreqs.add(f)
+                                }
+                                val bwMatch = Regex("bandwidth\\s*=\\s*([0-9]+)", RegexOption.IGNORE_CASE).find(blockStr)
+                                val bwVal = bwMatch?.groupValues?.get(1)?.toIntOrNull()
+                                if (bwVal != null) {
+                                    parsedBandwidth = when (bwVal) {
+                                        0, 1, 2 -> "20"
+                                        3 -> "40"
+                                        4 -> "80"
+                                        6 -> "160"
+                                        11 -> "320"
+                                        else -> parsedBandwidth
+                                    }
+                                }
+                                val stdMatch = Regex("(?:wifiStandard|mWifiStandard|standard)\\s*=\\s*([a-zA-Z0-9_]+)", RegexOption.IGNORE_CASE).find(blockStr)
+                                val stdVal = stdMatch?.groupValues?.get(1)
+                                if (stdVal != null) {
+                                    val stdInt = stdVal.toIntOrNull()
+                                    parsedStandard = when {
+                                        stdInt == 8 || stdVal.contains("11be", ignoreCase = true) || stdVal.contains("be", ignoreCase = true) -> "Wi-Fi 7"
+                                        stdInt == 6 || stdVal.contains("11ax", ignoreCase = true) || stdVal.contains("ax", ignoreCase = true) -> "Wi-Fi 6"
+                                        stdInt == 5 || stdVal.contains("11ac", ignoreCase = true) || stdVal.contains("ac", ignoreCase = true) -> "Wi-Fi 5"
+                                        stdInt == 4 || stdVal.contains("11n", ignoreCase = true) || stdVal.contains("n", ignoreCase = true) -> "Wi-Fi 4"
+                                        else -> parsedStandard
+                                    }
+                                }
+                            }
+                            if (parsedFreqs.isNotEmpty()) {
+                                freqs = parsedFreqs.distinct()
+                                bandwidth = parsedBandwidth
+                                standard = parsedStandard
+                                _lastTerminalOutput.value = "DUMPSYS SOFTAPINFO PARSED SUCCESS"
+                                if (freqs.all { it > 0 }) {
+                                    break
+                                }
+                            }
+                        }
+                    }
+
+                    // Fallback to broader grep if SoftApInfo was not found/parsed
+                    val result = RootExecutor.executePersistentCommand("dumpsys wifi | grep -E -i 'SoftApInfo|frequency|mFrequency|bandwidth|mBandwidth|channel|wifiStandard|mWifiStandard|standard'")
+                    if (result.success && result.output.isNotBlank()) {
+                        Log.d("HotspotViewModel", "DUMPSYS WIFI AP INFO: ${result.output}")
+                        _lastTerminalOutput.value = "DUMPSYS OUTPUT:\n${result.output.take(300)}"
+                        val lines = result.output.split("\n")
+                        freqs = lines.mapNotNull { line ->
+                            // Ignore lines containing Client or WifiInfo/mWifiInfo to filter out station client connection info
+                            if (line.contains("WifiInfo", ignoreCase = true) || line.contains("mWifiInfo", ignoreCase = true) || line.contains("ClientMode", ignoreCase = true)) {
+                                null
+                            } else {
+                                val match = Regex("(?:frequency:\\s*|mFrequency=|frequency=|freq=)([0-9]{4,})", RegexOption.IGNORE_CASE).find(line)
+                                match?.groupValues?.get(1)?.toIntOrNull()
+                            }
+                        }.distinct()
+                        
+                        val bwMatch = Regex("(?:bandwidth:\\s*|mBandwidth=|bandwidth=)([0-9]+)", RegexOption.IGNORE_CASE).find(result.output)
+                        if (bwMatch != null) {
+                            val bwVal = bwMatch.groupValues[1].toIntOrNull()
+                            if (bwVal != null) {
+                                bandwidth = when (bwVal) {
+                                    0, 1, 2 -> "20"
+                                    3 -> "40"
+                                    4 -> "80"
+                                    6 -> "160"
+                                    11 -> "320"
+                                    20, 40, 80, 160, 320 -> bwVal.toString()
+                                    else -> bwVal.toString()
+                                }
+                            }
+                        }
+
+                        val stdMatch = Regex("(?:wifiStandard|mWifiStandard|standard)\\s*=\\s*([a-zA-Z0-9_]+)", RegexOption.IGNORE_CASE).find(result.output)
+                        val stdVal = stdMatch?.groupValues?.get(1)
+                        if (stdVal != null) {
+                            val stdInt = stdVal.toIntOrNull()
+                            standard = when {
+                                stdInt == 8 || stdVal.contains("11be", ignoreCase = true) || stdVal.contains("be", ignoreCase = true) -> "Wi-Fi 7"
+                                stdInt == 6 || stdVal.contains("11ax", ignoreCase = true) || stdVal.contains("ax", ignoreCase = true) -> "Wi-Fi 6"
+                                stdInt == 5 || stdVal.contains("11ac", ignoreCase = true) || stdVal.contains("ac", ignoreCase = true) -> "Wi-Fi 5"
+                                stdInt == 4 || stdVal.contains("11n", ignoreCase = true) || stdVal.contains("n", ignoreCase = true) -> "Wi-Fi 4"
+                                else -> standard
+                            }
+                        }
+                        
+                        if (freqs.isNotEmpty() && freqs.all { it > 0 }) {
+                            break
+                        }
+                    } else {
+                        _lastTerminalOutput.value = "DUMPSYS OUTPUT: Empty or Failed"
+                    }
+                } else {
+                    break // Not rooted, can't check
+                }
+            }
+            if (freqs.isNotEmpty()) {
+                val displayBands = freqs.map { freq ->
+                    when {
+                        freq in 2412..2484 -> "2.4GHz (Ch:${((freq - 2412) / 5) + 1})"
+                        freq in 5170..5825 -> "5GHz (Ch:${((freq - 5170) / 5) + 34})"
+                        freq in 5955..7115 -> "6GHz (Ch:${(freq - 5950) / 5})"
+                        else -> "Freq:$freq"
+                    }
+                }
+                var wifiGen = standard
+                if (forceWifi7.value == true || mloEnabled.value == true) {
+                    wifiGen = "Wi-Fi 7"
+                } else if (wifiGen == null) {
+                    wifiGen = when {
+                        bandwidth == "320" -> "Wi-Fi 7"
+                        bandwidth == "160" -> {
+                            val has6g = freqs.any { it in 5955..7115 }
+                            if (has6g) "Wi-Fi 6E" else "Wi-Fi 6"
+                        }
+                        else -> {
+                            val has6g = freqs.any { it in 5955..7115 }
+                            val has5g = freqs.any { it in 5170..5825 }
+                            when {
+                                has6g -> "Wi-Fi 6"
+                                has5g -> "Wi-Fi 5"
+                                else -> "Wi-Fi 4"
+                            }
+                        }
+                    }
+                }
+                _activeBands.value = "${displayBands.joinToString(" + ")} | ${bandwidth}MHz | $wifiGen"
+                _lastTerminalOutput.value = "Parsed Frequency: ${freqs.joinToString(", ")} | BW: $bandwidth | Standard: $wifiGen"
+            } else {
+                val fullDump = RootExecutor.executePersistentCommand("dumpsys wifi")
+                _lastTerminalOutput.value = "Freq parsing failed. Partial dump:\n${fullDump.output.take(400)}"
+            }
+        }
+    }
+
     fun requestWriteSettingsPermission(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             try {
@@ -366,6 +527,16 @@ class HotspotViewModel(
                                 }
                             }
                             
+                            try {
+                                val setBeMethod = builderClass.getMethod("setIeee80211beEnabled", Boolean::class.javaPrimitiveType)
+                                setBeMethod.invoke(builderInstance, true)
+                            } catch(e: Exception) {}
+                            
+                            try {
+                                val setAxMethod = builderClass.getMethod("setIeee80211axEnabled", Boolean::class.javaPrimitiveType)
+                                setAxMethod.invoke(builderInstance, true)
+                            } catch(e: Exception) {}
+
                             try {
                                 val setChannelMethod = builderClass.getMethod("setChannel", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
                                 if (bandsList.contains("6G") && currentCh6g != "Auto") {
@@ -485,6 +656,7 @@ class HotspotViewModel(
     }
 
     fun refreshConnectedClients() {
+
         viewModelScope.launch {
             _isRefreshingClients.value = true
             if (_isRootAvailable.value == true) {
@@ -504,6 +676,70 @@ class HotspotViewModel(
             }
             _isRefreshingClients.value = false
         }
+    }
+
+    private fun isNetworkSourceEnabled(context: Context): Boolean {
+        // 1. Check WiFi
+        val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        val isWifiEnabled = wifiManager?.isWifiEnabled == true
+
+        // 2. Check Mobile Data
+        var isMobileDataEnabled = false
+        try {
+            isMobileDataEnabled = Settings.Global.getInt(context.contentResolver, "mobile_data", 0) == 1
+        } catch (e: Exception) {
+            // Ignore
+        }
+        if (!isMobileDataEnabled) {
+            try {
+                isMobileDataEnabled = Settings.Secure.getInt(context.contentResolver, "mobile_data", 0) == 1
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
+        if (!isMobileDataEnabled) {
+            try {
+                val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as? android.telephony.TelephonyManager
+                if (telephonyManager != null) {
+                    isMobileDataEnabled = telephonyManager.isDataEnabled
+                }
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
+
+        // 3. Fallback: Is there an active WiFi or Mobile network connection active?
+        if (!isWifiEnabled && !isMobileDataEnabled) {
+            try {
+                val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+                if (connectivityManager != null) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        val activeNetwork = connectivityManager.activeNetwork
+                        val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
+                        if (capabilities != null) {
+                            val hasWifi = capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)
+                            val hasCellular = capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR)
+                            if (hasWifi || hasCellular) {
+                                return true
+                            }
+                        }
+                    } else {
+                        @Suppress("DEPRECATION")
+                        val activeNetworkInfo = connectivityManager.activeNetworkInfo
+                        if (activeNetworkInfo != null && activeNetworkInfo.isConnected) {
+                            val type = activeNetworkInfo.type
+                            if (type == android.net.ConnectivityManager.TYPE_WIFI || type == android.net.ConnectivityManager.TYPE_MOBILE) {
+                                return true
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
+
+        return isWifiEnabled || isMobileDataEnabled
     }
 
     fun toggleHotspot() {
@@ -531,6 +767,17 @@ class HotspotViewModel(
                 }
             } else {
                 // Start Hotspot
+                val context = getApplication<Application>()
+                if (!isNetworkSourceEnabled(context)) {
+                    showNetworkSourceWarning.value = true
+                    viewModelScope.launch {
+                        delay(4000)
+                        showNetworkSourceWarning.value = false
+                    }
+                    _isHotspotLoading.value = false
+                    return@launch
+                }
+
                 val bandsList = mutableListOf<String>()
                 if (band2g.value) bandsList.add("2G")
                 if (band5g.value) bandsList.add("5G")
@@ -558,6 +805,7 @@ class HotspotViewModel(
                     channel6g = channel6g.value,
                     mloEnabled = mloEnabled.value,
                     useTetheringCmd = configWritten,
+                    forceWifi7 = forceWifi7.value,
                     repository = repository
                 )
                 
@@ -718,6 +966,14 @@ class HotspotViewModel(
             securityType.value = "WPA3_PERSONAL"
         } else if (b2 && !b5 && !b6) {
             securityType.value = "WPA3_PERSONAL"
+        }
+
+        // Automatic Country/Region selection based on active bands:
+        // default country 2.4ghz/5Ghz ya inme se koi ek k liye US & sirf 6Ghz k liye JP select ho
+        if (b6 && !b2 && !b5) {
+            selectedRegion.value = "JP"
+        } else if (b2 || b5) {
+            selectedRegion.value = "US"
         }
     }
 

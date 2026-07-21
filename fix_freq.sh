@@ -1,0 +1,1 @@
+sed -i 's/val match = Regex("frequency=\\([0-9]+\\)").find(line)/val match = Regex("(?:mFrequency|frequency|freq)=([0-9]+)", RegexOption.IGNORE_CASE).find(line)/g' ./app/src/main/java/com/example/ui/HotspotViewModel.kt

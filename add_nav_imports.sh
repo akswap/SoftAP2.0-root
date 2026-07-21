@@ -1,0 +1,1 @@
+grep -q "import androidx.compose.material3.NavigationBar" ./app/src/main/java/com/example/ui/MainHotspotScreen.kt || sed -i '/import androidx.compose.material3.MaterialTheme/a import androidx.compose.material3.NavigationBar\nimport androidx.compose.material3.NavigationBarItem' ./app/src/main/java/com/example/ui/MainHotspotScreen.kt

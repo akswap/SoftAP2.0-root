@@ -1,0 +1,50 @@
+    private fun updateRealActiveChannels() {
+        viewModelScope.launch(Dispatchers.IO) {
+            var freqs = emptyList<Int>()
+            var bandwidth = channelBandwidth.value
+            for (i in 1..8) {
+                delay(2000) // Poll every 2 seconds
+                if (_isRootAvailable.value == true) {
+                    val result = RootExecutor.executePersistentCommand("dumpsys wifi | grep -i 'SoftApInfo'")
+                    if (result.success && result.output.isNotBlank()) {
+                        Log.d("HotspotViewModel", "SoftApInfo: ${result.output}")
+                        val lines = result.output.split("\n")
+                        freqs = lines.mapNotNull { line ->
+                            val match = Regex("(?:mFrequency|frequency|freq)=([0-9]+)", RegexOption.IGNORE_CASE).find(line)
+                            match?.groupValues?.get(1)?.toIntOrNull()
+                        }.distinct()
+                        
+                        val bwMatch = Regex("(?:mBandwidth|bandwidth)=([0-9]+)", RegexOption.IGNORE_CASE).find(result.output)
+                        if (bwMatch != null) {
+                            val bwCode = bwMatch.groupValues[1].toIntOrNull()
+                            bandwidth = when (bwCode) {
+                                1 -> "20"
+                                2 -> "40"
+                                3 -> "80"
+                                4 -> "160"
+                                6 -> "320"
+                                else -> bandwidth
+                            }
+                        }
+                        
+                        if (freqs.isNotEmpty() && freqs.all { it > 0 }) {
+                            break
+                        }
+                    }
+                } else {
+                    break // Not rooted, can't check
+                }
+            }
+            if (freqs.isNotEmpty()) {
+                val displayBands = freqs.map { freq ->
+                    when {
+                        freq in 2412..2484 -> "2.4GHz (Ch:${((freq - 2412) / 5) + 1})"
+                        freq in 5170..5825 -> "5GHz (Ch:${((freq - 5170) / 5) + 34})"
+                        freq in 5955..7115 -> "6GHz (Ch:${(freq - 5950) / 5})"
+                        else -> "Freq:$freq"
+                    }
+                }
+                _activeBands.value = "${displayBands.joinToString(" + ")} | ${bandwidth}MHz"
+            }
+        }
+    }

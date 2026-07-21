@@ -51,6 +51,7 @@ fun MainHotspotScreen(viewModel: HotspotViewModel) {
     val selectedRegion by viewModel.selectedRegion.collectAsState()
     val hasWriteSettingsPermission by viewModel.hasWriteSettingsPermission.collectAsState()
     val forceDirectCli by viewModel.forceDirectCli.collectAsState()
+    val forceWifi7 by viewModel.forceWifi7.collectAsState()
 
     val isVpnRoutingActive by viewModel.isVpnRoutingActive.collectAsState()
     val upstreamInterface by viewModel.upstreamInterface.collectAsState()
@@ -69,6 +70,7 @@ fun MainHotspotScreen(viewModel: HotspotViewModel) {
     val savedProfiles by viewModel.savedProfiles.collectAsState()
     val blockedDevices by viewModel.blockedDevices.collectAsState()
     val commandLogs by viewModel.commandLogs.collectAsState()
+    val showNetworkSourceWarning by viewModel.showNetworkSourceWarning.collectAsState()
 
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -145,57 +147,59 @@ fun MainHotspotScreen(viewModel: HotspotViewModel) {
             )
 
             // Screen Content
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-            ) {
-                HotspotConfigTab(
-                    isHotspotActive = isHotspotActive,
-                    ssid = ssid,
-                    onSsidChange = { viewModel.ssid.value = it },
-                    password = password,
-                    onPasswordChange = { viewModel.password.value = it },
-                    securityType = securityType,
-                    onSecurityTypeChange = { viewModel.securityType.value = it },
-                    band2g = band2g,
-                    onBand2gChange = { 
-                        viewModel.band2g.value = it 
-                        viewModel.updateSettingsBasedOnBandsAndMlo()
-                    },
-                    band5g = band5g,
-                    onBand5gChange = { 
-                        viewModel.band5g.value = it 
-                        viewModel.updateSettingsBasedOnBandsAndMlo()
-                    },
-                    band6g = band6g,
-                    onBand6gChange = { 
-                        viewModel.band6g.value = it 
-                        viewModel.updateSettingsBasedOnBandsAndMlo()
-                    },
-                    mloEnabled = mloEnabled,
-                    onMloEnabledChange = { 
-                        viewModel.mloEnabled.value = it 
-                        viewModel.updateSettingsBasedOnBandsAndMlo()
-                    },
-                    channelBandwidth = channelBandwidth,
-                    onChannelBandwidthChange = { viewModel.channelBandwidth.value = it },
-                    channel5g = channel5g,
-                    onChannel5gChange = { viewModel.channel5g.value = it },
-                    channel6g = channel6g,
-                    onChannel6gChange = { viewModel.channel6g.value = it },
-                    selectedRegion = selectedRegion,
-                    onRegionChange = { viewModel.changeRegion(it) },
-                    hasWriteSettingsPermission = hasWriteSettingsPermission,
-                    forceDirectCli = forceDirectCli,
-                    onForceDirectCliChange = { viewModel.forceDirectCli.value = it },
-                    onRequestWriteSettingsPermission = { viewModel.requestWriteSettingsPermission(context) },
-                    hardwareCapabilities = hardwareCapabilities,
-                    savedProfiles = savedProfiles,
-                    onSaveProfileClick = { showProfileSaveDialog = true },
-                    onApplyProfile = { viewModel.applySavedProfile(it) },
-                    onDeleteProfile = { viewModel.deleteProfile(it) }
-                )
+            Column(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                Box(modifier = Modifier.weight(1f)) {
+                    HotspotConfigTab(
+                        isHotspotActive = isHotspotActive,
+                        ssid = ssid,
+                        onSsidChange = { viewModel.ssid.value = it },
+                        password = password,
+                        onPasswordChange = { viewModel.password.value = it },
+                        securityType = securityType,
+                        onSecurityTypeChange = { viewModel.securityType.value = it },
+                        band2g = band2g,
+                        onBand2gChange = { 
+                            viewModel.band2g.value = it 
+                            viewModel.updateSettingsBasedOnBandsAndMlo()
+                        },
+                        band5g = band5g,
+                        onBand5gChange = { 
+                            viewModel.band5g.value = it 
+                            viewModel.updateSettingsBasedOnBandsAndMlo()
+                        },
+                        band6g = band6g,
+                        onBand6gChange = { 
+                            viewModel.band6g.value = it 
+                            viewModel.updateSettingsBasedOnBandsAndMlo()
+                        },
+                        mloEnabled = mloEnabled,
+                        onMloEnabledChange = { 
+                            viewModel.mloEnabled.value = it 
+                            viewModel.updateSettingsBasedOnBandsAndMlo()
+                        },
+                        channelBandwidth = channelBandwidth,
+                        onChannelBandwidthChange = { viewModel.channelBandwidth.value = it },
+                        channel5g = channel5g,
+                        onChannel5gChange = { viewModel.channel5g.value = it },
+                        channel6g = channel6g,
+                        onChannel6gChange = { viewModel.channel6g.value = it },
+                        selectedRegion = selectedRegion,
+                        onRegionChange = { viewModel.changeRegion(it) },
+                        hasWriteSettingsPermission = hasWriteSettingsPermission,
+                        forceDirectCli = forceDirectCli,
+                        onForceDirectCliChange = { viewModel.forceDirectCli.value = it },
+                        forceWifi7 = forceWifi7,
+                        onForceWifi7Change = { viewModel.forceWifi7.value = it },
+                        onRequestWriteSettingsPermission = { viewModel.requestWriteSettingsPermission(context) },
+                        hardwareCapabilities = hardwareCapabilities,
+                        savedProfiles = savedProfiles,
+                        onSaveProfileClick = { showProfileSaveDialog = true },
+                        onApplyProfile = { viewModel.applySavedProfile(it) },
+                        onDeleteProfile = { viewModel.deleteProfile(it) }
+                    )
+                }
+                
+
             }
         }
     }
@@ -211,6 +215,67 @@ fun MainHotspotScreen(viewModel: HotspotViewModel) {
                 }
             }
         )
+    }
+
+    if (showNetworkSourceWarning) {
+        Dialog(onDismissRequest = { viewModel.showNetworkSourceWarning.value = false }) {
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 8.dp,
+                border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.6f)),
+                modifier = Modifier
+                    .widthIn(max = 320.dp)
+                    .wrapContentHeight()
+                    .padding(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = "Warning",
+                        tint = Color(0xFFFF9800), // Vibrant amber/orange warning color for high visibility
+                        modifier = Modifier.size(56.dp)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Attention",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "Please First on Mobile DATA or Wifi",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.95f),
+                        textAlign = TextAlign.Center,
+                        lineHeight = 22.sp
+                    )
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Button(
+                        onClick = { viewModel.showNetworkSourceWarning.value = false },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        ),
+                        shape = RoundedCornerShape(100),
+                        modifier = Modifier.fillMaxWidth().height(48.dp)
+                    ) {
+                        Text(
+                            text = "OK",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
     }
 
     // Profile Save Dialog
@@ -386,7 +451,7 @@ fun StatusCard(
                     )
                     if (isActive && activeBands.isNotEmpty()) {
                         Text(
-                            text = "Working on: $activeBands",
+                            text = activeBands,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = SystemTerminalGreen
@@ -454,6 +519,8 @@ fun HotspotConfigTab(
     hasWriteSettingsPermission: Boolean,
     forceDirectCli: Boolean,
     onForceDirectCliChange: (Boolean) -> Unit,
+    forceWifi7: Boolean,
+    onForceWifi7Change: (Boolean) -> Unit,
     onRequestWriteSettingsPermission: () -> Unit,
     hardwareCapabilities: List<String>,
     savedProfiles: List<HotspotProfile>,
@@ -758,7 +825,7 @@ fun HotspotConfigTab(
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Column(modifier = Modifier.padding(8.dp)) {
-                    if (band5g || mloEnabled) {
+                    if (band5g) {
                         ExposedDropdownMenuBox(
                             expanded = expandedChannel5g,
                             onExpandedChange = { if (!isHotspotActive) expandedChannel5g = !expandedChannel5g }
@@ -804,7 +871,7 @@ fun HotspotConfigTab(
                         Spacer(modifier = Modifier.height(4.dp))
                     }
 
-                    if (band6g || mloEnabled) {
+                    if (band6g) {
                         ExposedDropdownMenuBox(
                             expanded = expandedChannel6g,
                             onExpandedChange = { if (!isHotspotActive) expandedChannel6g = !expandedChannel6g }

@@ -1,0 +1,27 @@
+
+    // Missing stubs for MainHotspotScreen
+    fun blockDevice(client: com.example.util.ConnectedClient) {}
+    fun unblockDevice(macAddress: String) {}
+    
+    val isRoutingActive = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val vpnUpstream = kotlinx.coroutines.flow.MutableStateFlow("tun0")
+    val hotspotDownstream = kotlinx.coroutines.flow.MutableStateFlow("wlan1")
+    val vpnStatusLog = kotlinx.coroutines.flow.MutableStateFlow("")
+    
+    fun updateVpnInterfaces(upstream: String, downstream: String) {
+        vpnUpstream.value = upstream
+        hotspotDownstream.value = downstream
+    }
+    fun toggleVpnRouting() {}
+    fun autoDetectInterfaces() {}
+    
+    fun executeCustomCommand(cmd: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val res = RootExecutor.executePersistentCommand(cmd)
+            _lastTerminalOutput.value = "$ $cmd\n${res.output}"
+        }
+    }
+    fun clearCommandLogs() {
+        _lastTerminalOutput.value = ""
+    }
+    fun checkRootAccess() {}

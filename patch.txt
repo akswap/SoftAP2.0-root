@@ -1,0 +1,13 @@
+    fun checkWriteSettingsPermission() {
+        val context = getApplication<Application>()
+        val previousPermission = _hasWriteSettingsPermission.value
+        val currentPermission = if (Build.VERSION.SDK_INT >= Build.VERSION.CODES.M) {
+            Settings.System.canWrite(context)
+        } else {
+            true
+        }
+        _hasWriteSettingsPermission.value = currentPermission
+        if (currentPermission && !previousPermission) {
+            readConfigFromSystemSettings()
+        }
+    }

@@ -164,6 +164,7 @@ object RootExecutor {
         channel6g: String,
         mloEnabled: Boolean,
         useTetheringCmd: Boolean,
+        forceWifi7: Boolean = true,
         repository: HotspotRepository
     ): RootResult {
         val bandProps = when {
@@ -173,6 +174,18 @@ object RootExecutor {
 
         // Apply country code first
         changeRegion(region, repository)
+        
+        if (forceWifi7) {
+            // Force WiFi 7 (802.11be) in WCNSS_qcom_cfg.ini (to fix Magisk module reset issue)
+            executeCommand("sed -i 's/^enable_11be=0/enable_11be=1/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
+            executeCommand("sed -i 's/^gEnable11be=0/gEnable11be=1/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
+            executeCommand("sed -i 's/^BandCapability=/#BandCapabilityMOD=/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
+            executeCommand("sed -i 's/^enable_11be=0/enable_11be=1/g' /vendor/etc/wifi/WCNSS_qcom_cfg.ini", repository)
+            executeCommand("sed -i 's/^gEnable11be=0/gEnable11be=1/g' /vendor/etc/wifi/WCNSS_qcom_cfg.ini", repository)
+            
+            // Also force IEEE 802.11be in hostapd confs if possible
+            executeCommand("sed -i 's/ieee80211ax=1/ieee80211ax=1\nieee80211be=1\neht_oper_chwidth=1/g' /data/vendor/wifi/hostapd/hostapd.conf", repository)
+        }
 
         // Android SoftAP standard CLI parameters and config setups:
         val commands = mutableListOf<String>()
