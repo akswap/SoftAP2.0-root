@@ -8,12 +8,12 @@ If neither is active, it blocks starting the hotspot and displays a clear, highl
 Attention Dialog Popup in the exact center of the screen with the warning: "Please First on Mobile DATA or Wifi".<br>
 
 <b>Multi-Band & Multi-Link Operation (MLO) Support<br></b>
-Advanced multi-band control supporting 2.4GHz (2G), 5GHz (5G), and 6GHz (6G) frequency bands.<br>
+Advanced multi-band control supporting 2.4GHz (2G), 5GHz (5G)+ DFS channels , and 6GHz (6G) frequency bands.<br>
 Leverages Multi-Link Operation (MLO) / Bridged Mode configuration for simultaneous dual-band/tri-band broadcasting on supported hardware.
 
 <b>Detailed Channel and Bandwidth Optimization<br></b>
 Allows manual selection of specific channels for 2.4GHz, 5GHz, and 6GHz bands or leaving them on Auto.<br>
-Provides custom Channel Bandwidth selections (up to 320MHz) for ultra-fast Wi-Fi 7 speeds.<br>
+Provides custom Channel Bandwidth selections (Auto, 20Mhz to 320MHz) for ultra-fast Wi-Fi 7 speeds.<br>
 
 <b>Flexible Security Configurations<br>
 </b>Supports various security protocols including WPA2 Personal, WPA3 Personal, OWE (Enhanced Open), and Open.<br)</b>
