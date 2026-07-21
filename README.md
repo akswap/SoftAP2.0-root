@@ -11,7 +11,7 @@ Attention Dialog Popup in the exact center of the screen with the warning: "Plea
 Advanced multi-band control supporting 2.4GHz (2G), 5GHz (5G), and 6GHz (6G) frequency bands.<br>
 Leverages Multi-Link Operation (MLO) / Bridged Mode configuration for simultaneous dual-band/tri-band broadcasting on supported hardware.
 
-<b>Detailed Channel and Bandwidth Optimization<br)</b>
+<b>Detailed Channel and Bandwidth Optimization<br></b>
 Allows manual selection of specific channels for 2.4GHz, 5GHz, and 6GHz bands or leaving them on Auto.<br>
 Provides custom Channel Bandwidth selections (up to 320MHz) for ultra-fast Wi-Fi 7 speeds.<br>
 
