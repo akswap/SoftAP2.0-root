@@ -955,8 +955,8 @@ class HotspotViewModel(
             channelBandwidth.value = "160"
         } else if (b2 && b5 && !b6) {
             channelBandwidth.value = "160"
-        } else if (!b2 && b5 && b6) {
-            channelBandwidth.value = "320"
+        } else if (b6) {
+            channelBandwidth.value = "160"
         }
 
         // Security
@@ -969,10 +969,7 @@ class HotspotViewModel(
         }
 
         // Automatic Country/Region selection based on active bands:
-        // default country 2.4ghz/5Ghz ya inme se koi ek k liye US & sirf 6Ghz k liye JP select ho
-        if (b6 && !b2 && !b5) {
-            selectedRegion.value = "JP"
-        } else if (b2 || b5) {
+        if (b6 || b5 || b2) {
             selectedRegion.value = "US"
         }
     }
