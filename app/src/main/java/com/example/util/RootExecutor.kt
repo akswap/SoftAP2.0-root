@@ -139,11 +139,18 @@ object RootExecutor {
      * Change Wi-Fi Region/Country Code via multiple fallback CLI tricks
      */
     suspend fun changeRegion(countryCode: String, repository: HotspotRepository): RootResult {
+        val code = countryCode.uppercase()
         val commands = listOf(
-            "iw reg set ${countryCode.uppercase()}",
-            "setprop ro.boot.wificountrycode ${countryCode.uppercase()}",
-            "setprop wifi.countrycode ${countryCode.uppercase()}",
-            "cmd wifi force-country-code enabled ${countryCode.uppercase()}"
+            "iw reg set $code",
+            "setprop ro.boot.wificountrycode $code",
+            "setprop wifi.countrycode $code",
+            "setprop persist.vendor.wifi.country $code",
+            "settings put global wifi_country_code $code",
+            "settings put global tether_dun_required 0",
+            "settings put global softap_6ghz_supported 1",
+            "iwpriv wlan0 setCountry $code",
+            "iwpriv wlan0 setCountryCode $code",
+            "cmd wifi force-country-code enabled $code"
         )
         val fullCmd = commands.joinToString(" ; ")
         val result = executeCommand(fullCmd, repository)
@@ -176,15 +183,22 @@ object RootExecutor {
         changeRegion(region, repository)
         
         if (forceWifi7) {
-            // Force WiFi 7 (802.11be) in WCNSS_qcom_cfg.ini (to fix Magisk module reset issue)
+            // Force WiFi 7 (802.11be / EHT) in WCNSS_qcom_cfg.ini
             executeCommand("sed -i 's/^enable_11be=0/enable_11be=1/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
             executeCommand("sed -i 's/^gEnable11be=0/gEnable11be=1/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
+            executeCommand("sed -i 's/^gEnableEht=0/gEnableEht=1/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
+            executeCommand("sed -i 's/^gDriverEHTCapable=0/gDriverEHTCapable=1/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
+            executeCommand("sed -i 's/^gEnable320MHz6GHz=0/gEnable320MHz6GHz=1/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
+            executeCommand("sed -i 's/^gEnableMlo=0/gEnableMlo=1/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
             executeCommand("sed -i 's/^BandCapability=/#BandCapabilityMOD=/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
+            
             executeCommand("sed -i 's/^enable_11be=0/enable_11be=1/g' /vendor/etc/wifi/WCNSS_qcom_cfg.ini", repository)
             executeCommand("sed -i 's/^gEnable11be=0/gEnable11be=1/g' /vendor/etc/wifi/WCNSS_qcom_cfg.ini", repository)
+            executeCommand("sed -i 's/^gEnableEht=0/gEnableEht=1/g' /vendor/etc/wifi/WCNSS_qcom_cfg.ini", repository)
+            executeCommand("sed -i 's/^gEnable320MHz6GHz=0/gEnable320MHz6GHz=1/g' /vendor/etc/wifi/WCNSS_qcom_cfg.ini", repository)
             
             // Also force IEEE 802.11be in hostapd confs if possible
-            executeCommand("sed -i 's/ieee80211ax=1/ieee80211ax=1\nieee80211be=1\neht_oper_chwidth=1/g' /data/vendor/wifi/hostapd/hostapd.conf", repository)
+            executeCommand("sed -i 's/ieee80211ax=1/ieee80211ax=1\nieee80211be=1\neht_oper_chwidth=2/g' /data/vendor/wifi/hostapd/hostapd.conf", repository)
         }
 
         // Android SoftAP standard CLI parameters and config setups:
@@ -201,6 +215,7 @@ object RootExecutor {
             commands.add("setprop wifi.softap.mlo.enabled 1")
             commands.add("setprop persist.sys.wifi.softap.mlo 1")
             commands.add("setprop persist.vendor.wifi.softap.mlo 1")
+            commands.add("setprop persist.vendor.wifi.mlo_supported 1")
             val mloBands = mutableListOf<String>()
             if (bands.contains("2G")) mloBands.add("2.4G")
             if (bands.contains("5G")) mloBands.add("5G")
@@ -211,10 +226,15 @@ object RootExecutor {
             commands.add("setprop wifi.softap.mlo.enabled 0")
         }
         
-        commands.add("setprop wifi.softap.ieee80211be.enabled 1")
-        commands.add("setprop wifi.softap.be.enabled 1")
-        commands.add("setprop persist.sys.wifi.softap.be 1")
-        commands.add("setprop persist.vendor.wifi.softap.be 1")
+        if (forceWifi7 || bands.contains("6G")) {
+            commands.add("setprop wifi.softap.ieee80211be.enabled 1")
+            commands.add("setprop wifi.softap.be.enabled 1")
+            commands.add("setprop persist.sys.wifi.softap.be 1")
+            commands.add("setprop persist.vendor.wifi.softap.be 1")
+            commands.add("setprop persist.vendor.wifi.eht_supported 1")
+            commands.add("iwpriv wlan0 set11be 1")
+            commands.add("iwpriv wlan0 setEHT 1")
+        }
 
         if (useTetheringCmd) {
             // Standard system tethering activation via root CLI connectivity service

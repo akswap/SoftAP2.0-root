@@ -55,6 +55,7 @@ class HotspotViewModel(
     val hasWriteSettingsPermission = _hasWriteSettingsPermission.asStateFlow()
     val forceDirectCli = kotlinx.coroutines.flow.MutableStateFlow(true)
     val forceWifi7 = kotlinx.coroutines.flow.MutableStateFlow(true)
+    val allowOfflineHotspot = kotlinx.coroutines.flow.MutableStateFlow(true)
 
     // VPN Hotspot Routing states
     private val _isVpnRoutingActive = MutableStateFlow(false)
@@ -768,7 +769,7 @@ class HotspotViewModel(
             } else {
                 // Start Hotspot
                 val context = getApplication<Application>()
-                if (!isNetworkSourceEnabled(context)) {
+                if (!allowOfflineHotspot.value && !isNetworkSourceEnabled(context)) {
                     showNetworkSourceWarning.value = true
                     viewModelScope.launch {
                         delay(4000)

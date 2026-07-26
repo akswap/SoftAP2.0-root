@@ -52,6 +52,7 @@ fun MainHotspotScreen(viewModel: HotspotViewModel) {
     val hasWriteSettingsPermission by viewModel.hasWriteSettingsPermission.collectAsState()
     val forceDirectCli by viewModel.forceDirectCli.collectAsState()
     val forceWifi7 by viewModel.forceWifi7.collectAsState()
+    val allowOfflineHotspot by viewModel.allowOfflineHotspot.collectAsState()
 
     val isVpnRoutingActive by viewModel.isVpnRoutingActive.collectAsState()
     val upstreamInterface by viewModel.upstreamInterface.collectAsState()
@@ -190,6 +191,8 @@ fun MainHotspotScreen(viewModel: HotspotViewModel) {
                         onForceDirectCliChange = { viewModel.forceDirectCli.value = it },
                         forceWifi7 = forceWifi7,
                         onForceWifi7Change = { viewModel.forceWifi7.value = it },
+                        allowOfflineHotspot = allowOfflineHotspot,
+                        onAllowOfflineHotspotChange = { viewModel.allowOfflineHotspot.value = it },
                         onRequestWriteSettingsPermission = { viewModel.requestWriteSettingsPermission(context) },
                         hardwareCapabilities = hardwareCapabilities,
                         savedProfiles = savedProfiles,
@@ -521,6 +524,8 @@ fun HotspotConfigTab(
     onForceDirectCliChange: (Boolean) -> Unit,
     forceWifi7: Boolean,
     onForceWifi7Change: (Boolean) -> Unit,
+    allowOfflineHotspot: Boolean,
+    onAllowOfflineHotspotChange: (Boolean) -> Unit,
     onRequestWriteSettingsPermission: () -> Unit,
     hardwareCapabilities: List<String>,
     savedProfiles: List<HotspotProfile>,
@@ -584,6 +589,21 @@ fun HotspotConfigTab(
                         )
                         Text(
                             text = "Force Direct Wi-Fi CLI (Bypass system UI)",
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = allowOfflineHotspot,
+                            onCheckedChange = onAllowOfflineHotspotChange
+                        )
+                        Text(
+                            text = "Bypass Data/Wi-Fi Check (Offline Hotspot)",
                             fontSize = 14.sp,
                             color = MaterialTheme.colorScheme.onSurface
                         )
