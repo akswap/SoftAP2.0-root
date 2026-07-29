@@ -41,7 +41,7 @@ class HotspotViewModel(
     val band2g = MutableStateFlow(false)
     val band5g = MutableStateFlow(true)
     val band6g = MutableStateFlow(false)
-    val mloEnabled = MutableStateFlow(true)
+    val mloEnabled = MutableStateFlow(false)
     val channelBandwidth = MutableStateFlow("160") // Auto, 20, 40, 80, 160, 320
     val selectedRegion = MutableStateFlow("US") // IN, US, UK, DE, CN, JP
     
@@ -219,59 +219,94 @@ class HotspotViewModel(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.System.canWrite(context)) {
             return
         }
+        var loadedFromApi = false
         try {
             val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                val getSoftApConfigurationMethod = wifiManager.javaClass.getMethod("getSoftApConfiguration")
-                val softApConfig = getSoftApConfigurationMethod.invoke(wifiManager) ?: return
-                
-                val getSsidMethod = softApConfig.javaClass.getMethod("getSsid")
-                val systemSsid = getSsidMethod.invoke(softApConfig) as? String
-                if (!systemSsid.isNullOrEmpty()) {
-                    ssid.value = systemSsid
-                }
-                
-                val getPassphraseMethod = softApConfig.javaClass.getMethod("getPassphrase")
-                val systemPassphrase = getPassphraseMethod.invoke(softApConfig) as? String
-                if (systemPassphrase != null) {
-                    password.value = systemPassphrase
-                }
-                
-                val getSecurityTypeMethod = softApConfig.javaClass.getMethod("getSecurityType")
-                val systemSecurityTypeInt = getSecurityTypeMethod.invoke(softApConfig) as? Int
-                if (systemSecurityTypeInt != null) {
-                    securityType.value = when (systemSecurityTypeInt) {
-                        0 -> "OPEN"
-                        1 -> "WPA2"
-                        2 -> "WPA3_PERSONAL" // WPA3 SAE Transition is mapped to WPA3_PERSONAL for simplicity
-                        3 -> "WPA3_PERSONAL"
-                        4 -> "OWE" // OWE Transition
-                        5 -> "OWE"
-                        else -> "WPA2"
+                try {
+                    val getSoftApConfigurationMethod = wifiManager.javaClass.getMethod("getSoftApConfiguration")
+                    val softApConfig = getSoftApConfigurationMethod.invoke(wifiManager)
+                    if (softApConfig != null) {
+                        val getSsidMethod = softApConfig.javaClass.getMethod("getSsid")
+                        val systemSsid = getSsidMethod.invoke(softApConfig) as? String
+                        if (!systemSsid.isNullOrEmpty()) {
+                            ssid.value = systemSsid
+                        }
+                        
+                        val getPassphraseMethod = softApConfig.javaClass.getMethod("getPassphrase")
+                        val systemPassphrase = getPassphraseMethod.invoke(softApConfig) as? String
+                        if (systemPassphrase != null) {
+                            password.value = systemPassphrase
+                        }
+                        
+                        val getSecurityTypeMethod = softApConfig.javaClass.getMethod("getSecurityType")
+                        val systemSecurityTypeInt = getSecurityTypeMethod.invoke(softApConfig) as? Int
+                        if (systemSecurityTypeInt != null) {
+                            securityType.value = when (systemSecurityTypeInt) {
+                                0 -> "OPEN"
+                                1 -> "WPA2"
+                                2, 3 -> "WPA3_PERSONAL"
+                                4, 5 -> "OWE"
+                                else -> "WPA2"
+                            }
+                        }
+                        
+                        val getBandMethod = softApConfig.javaClass.getMethod("getBand")
+                        val systemBandInt = getBandMethod.invoke(softApConfig) as? Int
+                        if (systemBandInt != null) {
+                            band2g.value = (systemBandInt and 1) != 0
+                            band5g.value = (systemBandInt and 2) != 0
+                            band6g.value = (systemBandInt and 4) != 0
+                        }
+                        loadedFromApi = true
+                        _lastTerminalOutput.value = "Loaded native hotspot configuration!"
                     }
-                }
-                
-                val getBandMethod = softApConfig.javaClass.getMethod("getBand")
-                val systemBandInt = getBandMethod.invoke(softApConfig) as? Int
-                if (systemBandInt != null) {
-                    band2g.value = (systemBandInt and 1) != 0
-                    band5g.value = (systemBandInt and 2) != 0
-                    band6g.value = (systemBandInt and 4) != 0
+                } catch (e: Exception) {
+                    Log.w("HotspotViewModel", "System WifiManager API read skipped (requires system privileges): ${e.cause?.message ?: e.message}")
                 }
             } else {
-                val getWifiApConfigurationMethod = wifiManager.javaClass.getMethod("getWifiApConfiguration")
-                val wifiConfig = getWifiApConfigurationMethod.invoke(wifiManager) as? WifiConfiguration ?: return
-                
-                if (!wifiConfig.SSID.isNullOrEmpty()) {
-                    ssid.value = wifiConfig.SSID.replace("\"", "")
-                }
-                if (!wifiConfig.preSharedKey.isNullOrEmpty()) {
-                    password.value = wifiConfig.preSharedKey.replace("\"", "")
+                try {
+                    val getWifiApConfigurationMethod = wifiManager.javaClass.getMethod("getWifiApConfiguration")
+                    val wifiConfig = getWifiApConfigurationMethod.invoke(wifiManager) as? WifiConfiguration
+                    if (wifiConfig != null) {
+                        if (!wifiConfig.SSID.isNullOrEmpty()) {
+                            ssid.value = wifiConfig.SSID.replace("\"", "")
+                        }
+                        if (!wifiConfig.preSharedKey.isNullOrEmpty()) {
+                            password.value = wifiConfig.preSharedKey.replace("\"", "")
+                        }
+                        loadedFromApi = true
+                        _lastTerminalOutput.value = "Loaded native hotspot configuration!"
+                    }
+                } catch (e: Exception) {
+                    Log.w("HotspotViewModel", "Legacy WifiManager API read skipped: ${e.cause?.message ?: e.message}")
                 }
             }
-            _lastTerminalOutput.value = "Loaded native hotspot configuration!"
         } catch (e: Exception) {
-            Log.e("HotspotViewModel", "Failed to read softap configuration", e)
+            Log.w("HotspotViewModel", "Accessing WifiManager encountered exception: ${e.message}")
+        }
+
+        // Fallback: Read hotspot configuration via root CLI if not loaded from system API
+        if (!loadedFromApi && _isRootAvailable.value == true) {
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    val res = RootExecutor.executePersistentCommand("cmd wifi get-softap-config")
+                    if (res.success && res.output.isNotBlank()) {
+                        val ssidMatch = Regex("Ssid\\s*=\\s*\"?([^\",\\n]+)\"?", RegexOption.IGNORE_CASE).find(res.output)
+                        val passMatch = Regex("(?:Passphrase|PreSharedKey)\\s*=\\s*\"?([^\",\\n]+)\"?", RegexOption.IGNORE_CASE).find(res.output)
+                        val foundSsid = ssidMatch?.groupValues?.get(1)
+                        val foundPass = passMatch?.groupValues?.get(1)
+                        if (!foundSsid.isNullOrEmpty()) {
+                            ssid.value = foundSsid
+                        }
+                        if (foundPass != null) {
+                            password.value = foundPass
+                        }
+                    }
+                } catch (ex: Exception) {
+                    Log.d("HotspotViewModel", "Root config read fallback: ${ex.message}")
+                }
+            }
         }
     }
 
@@ -540,9 +575,9 @@ class HotspotViewModel(
 
                             try {
                                 val setChannelMethod = builderClass.getMethod("setChannel", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
-                                if (bandsList.contains("6G") && currentCh6g != "Auto") {
-                                    val ch6g = currentCh6g.toIntOrNull()
-                                    if (ch6g != null) setChannelMethod.invoke(builderInstance, ch6g, 4)
+                                if (bandsList.contains("6G")) {
+                                    val ch6g = if (currentCh6g != "Auto") currentCh6g.toIntOrNull() ?: 37 else 37
+                                    setChannelMethod.invoke(builderInstance, ch6g, 4)
                                 }
                                 if (bandsList.contains("5G") && currentCh5g != "Auto") {
                                     val ch5g = currentCh5g.toIntOrNull()
@@ -575,17 +610,42 @@ class HotspotViewModel(
                     
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                         try {
-                            val bwVal = when (channelBandwidth.value) {
-                                "20" -> 2
-                                "40" -> 3
-                                "80" -> 4
-                                "160" -> 6
-                                "320" -> 11
-                                else -> -1
+                            val bwVal = try {
+                                val effBw = if (channelBandwidth.value == "Auto" && band6g.value) "160" else channelBandwidth.value
+                                val fieldName = when (effBw) {
+                                    "20" -> "BANDWIDTH_20MHZ"
+                                    "40" -> "BANDWIDTH_40MHZ"
+                                    "80" -> "BANDWIDTH_80MHZ"
+                                    "160" -> "BANDWIDTH_160MHZ"
+                                    "320" -> "BANDWIDTH_320MHZ"
+                                    else -> null
+                                }
+                                if (fieldName != null) {
+                                    val softApClass = Class.forName("android.net.wifi.SoftApConfiguration")
+                                    try {
+                                        softApClass.getField(fieldName).getInt(null)
+                                    } catch (e: Exception) {
+                                        if (effBw == "320") {
+                                            try { softApClass.getField("BANDWIDTH_160MHZ").getInt(null) } catch (e2: Exception) { 8 }
+                                        } else -1
+                                    }
+                                } else -1
+                            } catch (e: Exception) {
+                                val effBw = if (channelBandwidth.value == "Auto" && band6g.value) "160" else channelBandwidth.value
+                                when (effBw) {
+                                    "20" -> 1
+                                    "40" -> 2
+                                    "80" -> 4
+                                    "160" -> 8
+                                    "320" -> 8 // Fallback to 160MHz base for framework SoftAp
+                                    else -> -1
+                                }
                             }
                             if (bwVal != -1) {
-                                val setBwMethod = builderClass.getMethod("setMaxChannelBandwidth", Int::class.javaPrimitiveType)
-                                setBwMethod.invoke(builderInstance, bwVal)
+                                try {
+                                    val setBwMethod = builderClass.getMethod("setMaxChannelBandwidth", Int::class.javaPrimitiveType)
+                                    setBwMethod.invoke(builderInstance, bwVal)
+                                } catch (e: Exception) {}
                             }
                         } catch (e: Exception) {}
                     }
@@ -943,35 +1003,104 @@ class HotspotViewModel(
         selectedRegion.value = profile.region
     }
 
+    fun selectBand2g(active: Boolean) {
+        if (!mloEnabled.value) {
+            band2g.value = true
+            band5g.value = false
+            band6g.value = false
+        } else {
+            if (!active && !band5g.value && !band6g.value) return
+            band2g.value = active
+        }
+        updateSettingsBasedOnBandsAndMlo()
+    }
+
+    fun selectBand5g(active: Boolean) {
+        if (!mloEnabled.value) {
+            band2g.value = false
+            band5g.value = true
+            band6g.value = false
+        } else {
+            if (!active && !band2g.value && !band6g.value) return
+            band5g.value = active
+        }
+        updateSettingsBasedOnBandsAndMlo()
+    }
+
+    fun selectBand6g(active: Boolean) {
+        if (!mloEnabled.value) {
+            band2g.value = false
+            band5g.value = false
+            band6g.value = true
+        } else {
+            if (!active && !band2g.value && !band5g.value) return
+            band6g.value = active
+        }
+        updateSettingsBasedOnBandsAndMlo()
+    }
+
+    fun setMloEnabled(enabled: Boolean) {
+        mloEnabled.value = enabled
+        if (!enabled) {
+            if (band5g.value) {
+                band2g.value = false
+                band5g.value = true
+                band6g.value = false
+            } else if (band6g.value) {
+                band2g.value = false
+                band5g.value = false
+                band6g.value = true
+            } else {
+                band2g.value = true
+                band5g.value = false
+                band6g.value = false
+            }
+        }
+        updateSettingsBasedOnBandsAndMlo()
+    }
+
     fun updateSettingsBasedOnBandsAndMlo() {
         val b2 = band2g.value
         val b5 = band5g.value
         val b6 = band6g.value
         val mlo = mloEnabled.value
 
-        // Bandwidth
+        // Bandwidth & Default Channel Configs
         if (b2 && !b5 && !b6) {
             channelBandwidth.value = "40"
         } else if (!b2 && b5 && !b6) {
             channelBandwidth.value = "160"
-        } else if (b2 && b5 && !b6) {
+            if (channel5g.value == "") channel5g.value = "Auto"
+        } else if (!b2 && !b5 && b6) {
             channelBandwidth.value = "160"
+            val valid6gChs = listOf("Auto", "37", "49", "53", "65", "69", "81", "85", "101", "117", "133", "149", "165", "181", "197")
+            if (channel6g.value !in valid6gChs || channel6g.value == "Auto") {
+                channel6g.value = "37"
+            }
         } else if (b6) {
             channelBandwidth.value = "160"
+            val valid6gChs = listOf("Auto", "37", "49", "53", "65", "69", "81", "85", "101", "117", "133", "149", "165", "181", "197")
+            if (channel6g.value !in valid6gChs || channel6g.value == "Auto") {
+                channel6g.value = "37"
+            }
         }
 
         // Security
-        if (mlo) {
-            securityType.value = "WPA3_PERSONAL"
-        } else if (b6) {
-            securityType.value = "WPA3_PERSONAL"
-        } else if (b2 && !b5 && !b6) {
+        if (mlo || b6 || (b2 && !b5 && !b6)) {
             securityType.value = "WPA3_PERSONAL"
         }
 
         // Automatic Country/Region selection based on active bands:
-        if (b6 || b5 || b2) {
-            selectedRegion.value = "US"
+        val valid6gRegions = listOf("US", "CA", "KR", "BR", "SA")
+        val validOtherRegions = listOf("IN", "US", "UK", "DE", "JP", "CN", "CA", "KR", "BR", "SA")
+        if (b6) {
+            if (selectedRegion.value !in valid6gRegions) {
+                selectedRegion.value = "US"
+            }
+        } else {
+            if (selectedRegion.value !in validOtherRegions) {
+                selectedRegion.value = "IN"
+            }
         }
     }
 

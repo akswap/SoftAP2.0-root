@@ -182,13 +182,15 @@ object RootExecutor {
         // Apply country code first
         changeRegion(region, repository)
         
-        if (forceWifi7) {
-            // Force WiFi 7 (802.11be / EHT) in WCNSS_qcom_cfg.ini
+        if (forceWifi7 || channelBandwidth == "320") {
+            val ehtWidth = if (channelBandwidth == "320") "2" else "1"
+            // Force WiFi 7 (802.11be / EHT) & 320MHz in WCNSS_qcom_cfg.ini
             executeCommand("sed -i 's/^enable_11be=0/enable_11be=1/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
             executeCommand("sed -i 's/^gEnable11be=0/gEnable11be=1/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
             executeCommand("sed -i 's/^gEnableEht=0/gEnableEht=1/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
             executeCommand("sed -i 's/^gDriverEHTCapable=0/gDriverEHTCapable=1/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
             executeCommand("sed -i 's/^gEnable320MHz6GHz=0/gEnable320MHz6GHz=1/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
+            executeCommand("sed -i 's/^gEnable320MHz=0/gEnable320MHz=1/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
             executeCommand("sed -i 's/^gEnableMlo=0/gEnableMlo=1/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
             executeCommand("sed -i 's/^BandCapability=/#BandCapabilityMOD=/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
             
@@ -196,9 +198,10 @@ object RootExecutor {
             executeCommand("sed -i 's/^gEnable11be=0/gEnable11be=1/g' /vendor/etc/wifi/WCNSS_qcom_cfg.ini", repository)
             executeCommand("sed -i 's/^gEnableEht=0/gEnableEht=1/g' /vendor/etc/wifi/WCNSS_qcom_cfg.ini", repository)
             executeCommand("sed -i 's/^gEnable320MHz6GHz=0/gEnable320MHz6GHz=1/g' /vendor/etc/wifi/WCNSS_qcom_cfg.ini", repository)
+            executeCommand("sed -i 's/^gEnable320MHz=0/gEnable320MHz=1/g' /vendor/etc/wifi/WCNSS_qcom_cfg.ini", repository)
             
-            // Also force IEEE 802.11be in hostapd confs if possible
-            executeCommand("sed -i 's/ieee80211ax=1/ieee80211ax=1\nieee80211be=1\neht_oper_chwidth=2/g' /data/vendor/wifi/hostapd/hostapd.conf", repository)
+            // Also force IEEE 802.11be in hostapd confs
+            executeCommand("sed -i 's/ieee80211ax=1/ieee80211ax=1\nieee80211be=1\neht_oper_chwidth=$ehtWidth/g' /data/vendor/wifi/hostapd/hostapd.conf", repository)
         }
 
         // Android SoftAP standard CLI parameters and config setups:
@@ -232,6 +235,22 @@ object RootExecutor {
             commands.add("setprop persist.sys.wifi.softap.be 1")
             commands.add("setprop persist.vendor.wifi.softap.be 1")
             commands.add("setprop persist.vendor.wifi.eht_supported 1")
+            if (channelBandwidth == "320") {
+                commands.add("setprop wifi.softap.bandwidth 320")
+                commands.add("setprop persist.vendor.wifi.softap.320mhz 1")
+                commands.add("setprop persist.vendor.wifi.bandwidth 320")
+                commands.add("setprop vendor.wifi.softap.320mhz 1")
+                commands.add("iwpriv wlan0 set_chwidth 320")
+                commands.add("iwpriv wlan0 set_bw 320")
+                commands.add("iwpriv wlan0 setEhtBw 320")
+            } else if (channelBandwidth == "Auto" || channelBandwidth == "160") {
+                commands.add("setprop wifi.softap.bandwidth 160")
+                commands.add("setprop persist.vendor.wifi.bandwidth 160")
+                commands.add("iwpriv wlan0 set_chwidth 160")
+                commands.add("iwpriv wlan0 set_bw 160")
+                commands.add("iwpriv wlan0 setHeBw 160")
+                commands.add("iwpriv wlan0 setEhtBw 160")
+            }
             commands.add("iwpriv wlan0 set11be 1")
             commands.add("iwpriv wlan0 setEHT 1")
         }
@@ -280,16 +299,20 @@ object RootExecutor {
                 else -> "-b 2"
             }
 
-            val bwArg = if (channelBandwidth != "Auto") "-w $channelBandwidth" else ""
+            val bwArg = when (channelBandwidth) {
+                "20", "40", "80", "160" -> "-w $channelBandwidth"
+                "320" -> "-w 160" // Enforce 160MHz base for system cmd wifi so hardware fallback lands on 160MHz instead of 20MHz default
+                else -> if (bands.contains("6G")) "-w 160" else ""
+            }
 
-            // Calculate frequencies from channels ONLY if explicitly set
+            // Calculate frequencies from channels
             val freqs = mutableListOf<Int>()
             val explicitCh5g = channel5g != "Auto" && channel5g.toIntOrNull() != null
             val explicitCh6g = channel6g != "Auto" && channel6g.toIntOrNull() != null
 
-            if (explicitCh5g || explicitCh6g) {
-                // If any channel is explicitly set, we MUST use -f. 
-                // When using -f in Bridged mode, we must provide frequencies for ALL bands.
+            if (explicitCh5g || explicitCh6g || bands.contains("6G")) {
+                // If any channel is explicitly set OR 6GHz is enabled, we MUST provide -f with valid PSC frequencies. 
+                // When using -f in Bridged/Multi-band mode, we must provide frequencies for ALL active bands.
                 if (bands.contains("2G")) {
                     freqs.add(2437) // Default Ch 6 for 2.4GHz
                 }
@@ -304,7 +327,7 @@ object RootExecutor {
                     if (explicitCh6g) {
                         freqs.add(5950 + (channel6g.toInt() * 5))
                     } else {
-                        freqs.add(6115) // Default Ch 33 for 6GHz
+                        freqs.add(6135) // Default primary PSC Channel 37 for 6GHz (6135 MHz)
                     }
                 }
             }

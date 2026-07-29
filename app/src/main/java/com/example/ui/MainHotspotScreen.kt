@@ -159,25 +159,13 @@ fun MainHotspotScreen(viewModel: HotspotViewModel) {
                         securityType = securityType,
                         onSecurityTypeChange = { viewModel.securityType.value = it },
                         band2g = band2g,
-                        onBand2gChange = { 
-                            viewModel.band2g.value = it 
-                            viewModel.updateSettingsBasedOnBandsAndMlo()
-                        },
+                        onBand2gChange = { viewModel.selectBand2g(it) },
                         band5g = band5g,
-                        onBand5gChange = { 
-                            viewModel.band5g.value = it 
-                            viewModel.updateSettingsBasedOnBandsAndMlo()
-                        },
+                        onBand5gChange = { viewModel.selectBand5g(it) },
                         band6g = band6g,
-                        onBand6gChange = { 
-                            viewModel.band6g.value = it 
-                            viewModel.updateSettingsBasedOnBandsAndMlo()
-                        },
+                        onBand6gChange = { viewModel.selectBand6g(it) },
                         mloEnabled = mloEnabled,
-                        onMloEnabledChange = { 
-                            viewModel.mloEnabled.value = it 
-                            viewModel.updateSettingsBasedOnBandsAndMlo()
-                        },
+                        onMloEnabledChange = { viewModel.setMloEnabled(it) },
                         channelBandwidth = channelBandwidth,
                         onChannelBandwidthChange = { viewModel.channelBandwidth.value = it },
                         channel5g = channel5g,
@@ -539,11 +527,29 @@ fun HotspotConfigTab(
     var expandedChannel5g by remember { mutableStateOf(false) }
     var expandedChannel6g by remember { mutableStateOf(false) }
 
-    val regions = listOf("IN", "US", "UK", "DE", "JP", "CN")
+    val regions6g = listOf("US", "CA", "KR", "BR", "SA")
+    val regionsOther = listOf("IN", "US", "UK", "DE", "JP", "CN", "CA", "KR", "BR", "SA")
+    val regions = if (band6g) regions6g else regionsOther
     val bandwidths = listOf("Auto", "20", "40", "80", "160", "320")
     val channels5g = listOf("Auto", "36", "40", "44", "48", "100", "149", "153", "157", "161", "165")
-    val channels6g = listOf("Auto", "1", "5", "9", "13", "17", "21", "33", "37", "49", "53", "65", "69", "81", "85", "89", "93")
+    val channels6g = listOf("Auto", "37", "49", "53", "65", "69", "81", "85", "101", "117", "133", "149", "165", "181", "197")
     val securityTypes = listOf("WPA3_PERSONAL", "WPA2", "OWE", "OPEN")
+
+    fun getRegionDisplayName(code: String): String {
+        return when (code) {
+            "US" -> "US (USA)"
+            "CA" -> "CA (Canada)"
+            "KR" -> "KR (South Korea)"
+            "BR" -> "BR (Brazil)"
+            "SA" -> "SA (Saudi Arabia)"
+            "IN" -> "IN (India)"
+            "UK" -> "UK (United Kingdom)"
+            "DE" -> "DE (Germany)"
+            "JP" -> "JP (Japan)"
+            "CN" -> "CN (China)"
+            else -> code
+        }
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -806,7 +812,7 @@ fun HotspotConfigTab(
                         onExpandedChange = { if (!isHotspotActive) expandedRegion = !expandedRegion }
                     ) {
                         OutlinedTextField(
-                            value = "Region Code: $selectedRegion",
+                            value = "Region Code: ${getRegionDisplayName(selectedRegion)}",
                             onValueChange = {},
                             readOnly = true,
                             enabled = !isHotspotActive,
@@ -826,7 +832,7 @@ fun HotspotConfigTab(
                         ) {
                             regions.forEach { reg ->
                                 DropdownMenuItem(
-                                    text = { Text(reg) },
+                                    text = { Text(getRegionDisplayName(reg)) },
                                     onClick = {
                                         onRegionChange(reg)
                                         expandedRegion = false
