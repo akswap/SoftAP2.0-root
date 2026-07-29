@@ -604,41 +604,55 @@ class HotspotViewModel(
                     if (Build.VERSION.SDK_INT >= 33) { // Android 13+
                         try {
                             val setBeEnabledMethod = builderClass.getMethod("setIeee80211beEnabled", Boolean::class.javaPrimitiveType)
-                            setBeEnabledMethod.invoke(builderInstance, true)
+                            setBeEnabledMethod.invoke(builderInstance, band6g.value)
                         } catch (e: Exception) {}
                     }
                     
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                         try {
                             val bwVal = try {
-                                val effBw = if (channelBandwidth.value == "Auto" && band6g.value) "160" else channelBandwidth.value
+                                val rawBw = channelBandwidth.value
+                                val effBw = if (rawBw == "Auto") {
+                                    if (band6g.value || band5g.value) "160" else "40"
+                                } else if (rawBw == "320" && !band6g.value) {
+                                    "160"
+                                } else {
+                                    rawBw
+                                }
                                 val fieldName = when (effBw) {
                                     "20" -> "BANDWIDTH_20MHZ"
                                     "40" -> "BANDWIDTH_40MHZ"
                                     "80" -> "BANDWIDTH_80MHZ"
                                     "160" -> "BANDWIDTH_160MHZ"
                                     "320" -> "BANDWIDTH_320MHZ"
-                                    else -> null
+                                    else -> "BANDWIDTH_160MHZ"
                                 }
-                                if (fieldName != null) {
-                                    val softApClass = Class.forName("android.net.wifi.SoftApConfiguration")
-                                    try {
-                                        softApClass.getField(fieldName).getInt(null)
-                                    } catch (e: Exception) {
-                                        if (effBw == "320") {
-                                            try { softApClass.getField("BANDWIDTH_160MHZ").getInt(null) } catch (e2: Exception) { 8 }
-                                        } else -1
-                                    }
-                                } else -1
+                                val softApClass = Class.forName("android.net.wifi.SoftApConfiguration")
+                                try {
+                                    softApClass.getField(fieldName).getInt(null)
+                                } catch (e: Exception) {
+                                    if (effBw == "320" || effBw == "160") {
+                                        try { softApClass.getField("BANDWIDTH_160MHZ").getInt(null) } catch (e2: Exception) {
+                                            try { softApClass.getField("BANDWIDTH_80MHZ").getInt(null) } catch (e3: Exception) { 4 }
+                                        }
+                                    } else -1
+                                }
                             } catch (e: Exception) {
-                                val effBw = if (channelBandwidth.value == "Auto" && band6g.value) "160" else channelBandwidth.value
+                                val rawBw = channelBandwidth.value
+                                val effBw = if (rawBw == "Auto") {
+                                    if (band6g.value || band5g.value) "160" else "40"
+                                } else if (rawBw == "320" && !band6g.value) {
+                                    "160"
+                                } else {
+                                    rawBw
+                                }
                                 when (effBw) {
                                     "20" -> 1
                                     "40" -> 2
                                     "80" -> 4
                                     "160" -> 8
                                     "320" -> 8 // Fallback to 160MHz base for framework SoftAp
-                                    else -> -1
+                                    else -> 8
                                 }
                             }
                             if (bwVal != -1) {

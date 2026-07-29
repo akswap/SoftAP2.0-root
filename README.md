@@ -15,7 +15,7 @@
 - **🌐 Offline Hotspot & Data Bypass**:
   - Option to start hotspot without active mobile data or Wi-Fi uplink checks.
 - **🌍 Regional Regulatory Code Bypass**:
-  - Change Wi-Fi country code on the fly (IN, US (USA), CA (Canada), KR (South Korea), BR (Brazil), SA (Saudi Arabia).) to unlock restricted 6GHz / 5GHz channels via `iw`, `setprop`, `settings`, and Qualcomm config tweaks (`WCNSS_qcom_cfg.ini`).
+  - Change Wi-Fi country code on the fly (`US`, `JP`, `IN`, `DE`, `UK`, `CN`) to unlock restricted 6GHz / 5GHz channels via `iw`, `setprop`, `settings`, and Qualcomm config tweaks (`WCNSS_qcom_cfg.ini`).
 - **🛡️ Root / Shell CLI Execution Engine**:
   - Direct shell script execution for root-enabled devices to bypass vendor limitations.
 - **🔀 VPN Tethering & Interface Routing**:
@@ -43,7 +43,6 @@
    - Toggle **Force Wi-Fi 7 (802.11be)** and **Bypass Offline Check** as needed.
 3. **Start Hotspot**:
    - Tap **Start Hotspot**.
-<img width="296" height="640" alt="Hotspot" src="https://github.com/user-attachments/assets/dfb03d23-9d1c-407f-b1c8-ac9ae730362b" />
 
 ---
 

@@ -229,30 +229,57 @@ object RootExecutor {
             commands.add("setprop wifi.softap.mlo.enabled 0")
         }
         
-        if (forceWifi7 || bands.contains("6G")) {
-            commands.add("setprop wifi.softap.ieee80211be.enabled 1")
-            commands.add("setprop wifi.softap.be.enabled 1")
-            commands.add("setprop persist.sys.wifi.softap.be 1")
-            commands.add("setprop persist.vendor.wifi.softap.be 1")
-            commands.add("setprop persist.vendor.wifi.eht_supported 1")
-            if (channelBandwidth == "320") {
-                commands.add("setprop wifi.softap.bandwidth 320")
-                commands.add("setprop persist.vendor.wifi.softap.320mhz 1")
-                commands.add("setprop persist.vendor.wifi.bandwidth 320")
-                commands.add("setprop vendor.wifi.softap.320mhz 1")
-                commands.add("iwpriv wlan0 set_chwidth 320")
-                commands.add("iwpriv wlan0 set_bw 320")
-                commands.add("iwpriv wlan0 setEhtBw 320")
-            } else if (channelBandwidth == "Auto" || channelBandwidth == "160") {
-                commands.add("setprop wifi.softap.bandwidth 160")
-                commands.add("setprop persist.vendor.wifi.bandwidth 160")
-                commands.add("iwpriv wlan0 set_chwidth 160")
-                commands.add("iwpriv wlan0 set_bw 160")
-                commands.add("iwpriv wlan0 setHeBw 160")
-                commands.add("iwpriv wlan0 setEhtBw 160")
+        if (forceWifi7 || bands.contains("6G") || bands.contains("5G")) {
+            if (bands.contains("6G")) {
+                commands.add("setprop wifi.softap.ieee80211be.enabled 1")
+                commands.add("setprop wifi.softap.be.enabled 1")
+                commands.add("setprop persist.sys.wifi.softap.be 1")
+                commands.add("setprop persist.vendor.wifi.softap.be 1")
+                commands.add("setprop persist.vendor.wifi.eht_supported 1")
+                commands.add("iwpriv wlan0 set11be 1")
+                commands.add("iwpriv wlan0 setEHT 1")
+            } else {
+                commands.add("setprop wifi.softap.ieee80211be.enabled 0")
+                commands.add("setprop wifi.softap.be.enabled 0")
+                commands.add("setprop persist.sys.wifi.softap.be 0")
+                commands.add("setprop persist.vendor.wifi.softap.be 0")
+                commands.add("iwpriv wlan0 set11be 0")
+                commands.add("iwpriv wlan0 setEHT 0")
             }
-            commands.add("iwpriv wlan0 set11be 1")
-            commands.add("iwpriv wlan0 setEHT 1")
+
+            val targetBw = when (channelBandwidth) {
+                "20" -> "20"
+                "40" -> "40"
+                "80" -> "80"
+                "160" -> "160"
+                "320" -> if (bands.contains("6G")) "320" else "160"
+                else -> if (bands.contains("6G") || bands.contains("5G")) "160" else "40"
+            }
+
+            commands.add("setprop wifi.softap.bandwidth $targetBw")
+            commands.add("setprop persist.sys.wifi.softap.bandwidth $targetBw")
+            commands.add("setprop persist.vendor.wifi.bandwidth $targetBw")
+            commands.add("setprop persist.vendor.wifi.softap.bandwidth $targetBw")
+            commands.add("setprop vendor.wifi.softap.bandwidth $targetBw")
+
+            if (targetBw == "320") {
+                commands.add("setprop persist.vendor.wifi.softap.320mhz 1")
+                commands.add("setprop vendor.wifi.softap.320mhz 1")
+                commands.add("iwpriv wlan0 setEhtBw 320")
+            } else {
+                commands.add("setprop persist.vendor.wifi.softap.320mhz 0")
+                commands.add("setprop vendor.wifi.softap.320mhz 0")
+                commands.add("iwpriv wlan0 setEhtBw $targetBw")
+            }
+
+            commands.add("iwpriv wlan0 set_chwidth $targetBw")
+            commands.add("iwpriv wlan0 set_bw $targetBw")
+            commands.add("iwpriv wlan0 setVhtBw $targetBw")
+            commands.add("iwpriv wlan0 setHeBw $targetBw")
+            commands.add("iwpriv wlan0 set11ac 1")
+            commands.add("iwpriv wlan0 setVHT 1")
+            commands.add("iwpriv wlan0 set11ax 1")
+            commands.add("iwpriv wlan0 setHE 1")
         }
 
         if (useTetheringCmd) {
@@ -302,7 +329,7 @@ object RootExecutor {
             val bwArg = when (channelBandwidth) {
                 "20", "40", "80", "160" -> "-w $channelBandwidth"
                 "320" -> "-w 160" // Enforce 160MHz base for system cmd wifi so hardware fallback lands on 160MHz instead of 20MHz default
-                else -> if (bands.contains("6G")) "-w 160" else ""
+                else -> if (bands.contains("6G") || bands.contains("5G")) "-w 160" else "-w 40"
             }
 
             // Calculate frequencies from channels
