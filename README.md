@@ -43,6 +43,7 @@
    - Toggle **Force Wi-Fi 7 (802.11be)** and **Bypass Offline Check** as needed.
 3. **Start Hotspot**:
    - Tap **Start Hotspot**.
+<img width="296" height="640" alt="Hotspot" src="https://github.com/user-attachments/assets/dfb03d23-9d1c-407f-b1c8-ac9ae730362b" />
 
 ---
 
