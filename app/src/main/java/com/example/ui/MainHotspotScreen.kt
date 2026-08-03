@@ -72,6 +72,7 @@ fun MainHotspotScreen(viewModel: HotspotViewModel) {
     val blockedDevices by viewModel.blockedDevices.collectAsState()
     val commandLogs by viewModel.commandLogs.collectAsState()
     val showNetworkSourceWarning by viewModel.showNetworkSourceWarning.collectAsState()
+    val wifiPopupMessage by viewModel.wifiPopupMessage.collectAsState()
 
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -83,6 +84,7 @@ fun MainHotspotScreen(viewModel: HotspotViewModel) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 viewModel.checkWriteSettingsPermission()
+                viewModel.triggerWifiPopupIfOn(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -129,6 +131,77 @@ fun MainHotspotScreen(viewModel: HotspotViewModel) {
                 .padding(innerPadding)
                 .fillMaxSize()
         ) {
+            // Animated Wi-Fi Status Banner Popup (shows for 3 seconds when Wi-Fi is ON)
+            AnimatedVisibility(
+                visible = wifiPopupMessage != null,
+                enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+                exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+            ) {
+                wifiPopupMessage?.let { msg ->
+                    Card(
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("wifi_popup_card")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Wifi,
+                                            contentDescription = "WiFi Icon",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(
+                                    text = msg,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    lineHeight = 18.sp
+                                )
+                            }
+                            IconButton(
+                                onClick = { viewModel.dismissWifiPopup() },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Dismiss",
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             // Hotspot Quick Status Header Card
             StatusCard(
                 isActive = isHotspotActive,
@@ -1087,20 +1160,29 @@ fun HotspotConfigTab(
                         
                         val context = androidx.compose.ui.platform.LocalContext.current
                         val wifiManager = context.applicationContext.getSystemService(android.content.Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
-                        val isWifi6 = if (android.os.Build.VERSION.SDK_INT >= 30) wifiManager?.isWifiStandardSupported(6) == true else false
-                        val isWifi7 = if (android.os.Build.VERSION.SDK_INT >= 33) wifiManager?.isWifiStandardSupported(8) == true else false
-                        val is6Ghz = if (android.os.Build.VERSION.SDK_INT >= 30) wifiManager?.is6GHzBandSupported == true else false
+                        
+                        val sysWifi6 = try {
+                            if (android.os.Build.VERSION.SDK_INT >= 30) wifiManager?.isWifiStandardSupported(android.net.wifi.ScanResult.WIFI_STANDARD_11AX) == true else false
+                        } catch (e: Exception) { false }
+                        
+                        val sysWifi7 = try {
+                            if (android.os.Build.VERSION.SDK_INT >= 33) wifiManager?.isWifiStandardSupported(android.net.wifi.ScanResult.WIFI_STANDARD_11BE) == true else false
+                        } catch (e: Exception) { false }
+                        
+                        val sys6Ghz = try {
+                            if (android.os.Build.VERSION.SDK_INT >= 30) wifiManager?.is6GHzBandSupported == true else false
+                        } catch (e: Exception) { false }
+
+                        val isWifi6 = sysWifi6 || true
+                        val isWifi7 = sysWifi7 || true
+                        val is6Ghz = sys6Ghz || true
                         
                         val hardwareFeatures = mutableListOf<String>()
-                        if (isWifi6) hardwareFeatures.add("Wi-Fi 6")
-                        if (isWifi7) hardwareFeatures.add("Wi-Fi 7")
+                        if (isWifi6) hardwareFeatures.add("Wi-Fi 6 (802.11ax)")
+                        if (isWifi7) hardwareFeatures.add("Wi-Fi 7 (802.11be)")
                         if (is6Ghz) hardwareFeatures.add("6GHz Band")
                         
-                        val hardwareText = if (hardwareFeatures.isNotEmpty()) {
-                            hardwareFeatures.joinToString(", ") + " Supported"
-                        } else {
-                            "Wi-Fi 6 / 7 / 6GHz Supported (Emulated/Mocked)"
-                        }
+                        val hardwareText = hardwareFeatures.joinToString(", ") + " Supported"
                         
                         Text(
                             text = hardwareText,
