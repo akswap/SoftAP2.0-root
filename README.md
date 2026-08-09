@@ -1,4 +1,4 @@
-# 📶 SoftAP - Advanced WiFi 7 & 6GHz Hotspot Controller
+# 📶 SoftAP & SoftAP Router APK- Advanced WiFi 7 & 6GHz Hotspot Controller & WEBUI
 
 **SoftAP Controller** is a powerful Android application designed for advanced hotspot (SoftAP) control, multi-band frequency unlocking (2.4GHz, 5GHz, 6GHz), Wi-Fi 7 (802.11be / EHT / MLO) forcing, bandwidth tuning (up to 320 MHz), region code bypass, and offline hotspot tethering.
 
