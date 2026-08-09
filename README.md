@@ -50,3 +50,68 @@
 
 - **Disclaimer**: Unlocking non-standard radio channels or changing regional country codes may be subject to regulatory restrictions in certain jurisdictions. Use responsibly.
 - **License**: Open Source project released under the MIT License.
+
+
+
+
+## SoftAP Router APK — Key Features
+
+SoftAP Router is a powerful **local WebUI management solution for rooted Android devices**, designed to turn an Android phone into a feature-rich mobile router and hotspot management platform.
+
+### 🌐 Local WebUI Management
+
+Access and manage the Android router directly from a PC, laptop, or another device connected to the same local network — no cloud connection required.
+
+### 📡 Hotspot & Wireless Configuration
+
+Manage essential hotspot and wireless settings, including:
+
+* Wi-Fi SSID
+* Security configuration
+* Wireless band and related settings
+* Hotspot status and control
+
+### 📶 Cellular Network Monitoring
+
+Monitor real-time cellular information from the WebUI:
+
+* Signal strength
+* Network type
+* Cellular interface
+* Active modem status
+* Network connectivity information
+
+### ⚡ Quick Actions
+
+Perform important router operations directly from the dashboard:
+
+* **Restart Radio** — quickly restart the cellular modem/radio
+* **Refresh Signal** — instantly refresh cellular signal and network metrics
+* **Airplane Mode** — conveniently control Airplane Mode
+
+### 🔄 Automated WebUI Recovery
+
+A built-in recovery mechanism helps when the WebUI becomes unreachable, for example after a hotspot restart or IP address change.
+
+The recovery page guides the user through:
+
+* Checking the current network connection
+* Connecting the PC to the mobile hotspot
+* Connecting both devices to the same Wi-Fi network
+* Using USB/USB tethering when supported
+* Finding and opening the current WebUI IP address
+* Basic network troubleshooting
+
+### 📴 Offline-Ready Architecture
+
+Designed specifically for **local-network operation**, allowing the router management interface to remain useful even when Internet connectivity is unavailable, unstable, or restricted.
+
+### 🔐 Local-First Design
+
+The management interface is intended for direct local access between the Android device and connected clients, minimizing dependence on external servers or cloud services.
+
+---
+
+**SoftAP Router**
+*Turn your rooted Android device into a locally managed smart mobile router.*
+
