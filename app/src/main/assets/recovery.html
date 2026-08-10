@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SoftAP Router — WebUI Recovery</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:Segoe UI,Arial,sans-serif;background:#eef4ff;color:#172033}
+.wrap{max-width:900px;margin:auto;padding:22px 16px 40px}.card{background:#fff;border:1px solid #dce5f2;border-radius:20px;padding:24px;margin:14px 0;box-shadow:0 8px 25px #17365f12}
+header{text-align:center;padding:30px 18px}.logo{font-size:38px}h1{margin:8px 0;font-size:29px}h2{font-size:21px;margin:0 0 8px}p{line-height:1.55;color:#566276}
+.badge{display:inline-block;padding:7px 12px;border-radius:20px;background:#fff4cf;color:#765900;font-weight:700;font-size:13px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:13px}.step{padding:17px;border:1px solid #e1e8f2;border-radius:15px;background:#fbfdff}.n{display:grid;place-items:center;width:31px;height:31px;border-radius:50%;background:#1769e0;color:#fff;font-weight:800;margin-bottom:9px}
+.step h3{margin:0 0 5px}.url{display:flex;gap:8px;margin-top:14px}.url input{flex:1;min-width:0;padding:13px;border:1px solid #cbd7e7;border-radius:11px;font-size:16px}
+button{border:0;border-radius:11px;padding:12px 16px;font-weight:700;cursor:pointer}.primary{background:#1769e0;color:#fff}.secondary{background:#edf3fb;color:#17365f}
+.status{margin-top:12px;padding:12px;border-left:4px solid #1769e0;background:#f1f7ff;border-radius:8px}
+details{border:1px solid #e1e7ef;border-radius:12px;padding:13px 15px;margin-top:9px}summary{cursor:pointer;font-weight:700}
+.tip{margin-top:14px;padding:13px;border-left:4px solid #e0a000;background:#fff8e7;border-radius:8px}.ok{background:#edfff5;border-left-color:#16a05d}
+footer{text-align:center;color:#788498;font-size:13px}
+@media(max-width:650px){.grid{grid-template-columns:1fr}.url{flex-direction:column}h1{font-size:25px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="card">
+<div class="logo">📡</div>
+<h1>SoftAP Router WebUI</h1>
+<p><b>WebUI is not reachable</b> / <b>Web इंटरफेस नहीं खुल रहा है</b></p>
+<span class="badge">🔄 Mobile IP may have changed / मोबाइल की IP बदल सकती है</span>
+</header>
+
+<section class="card">
+<h2>🌐 Connect Mobile & PC / मोबाइल और PC को Connect करें</h2>
+<p><b>English:</b> Mobile and PC must have a local network connection to each other.</p>
+<p><b>हिन्दी:</b> मोबाइल और PC के बीच local network connection होना जरूरी है।</p>
+
+<div class="grid">
+<div class="step"><div class="n">1</div><h3>📱 Mobile Hotspot</h3>
+<p><b>English:</b> Turn ON Mobile Hotspot and connect the PC to the mobile's hotspot Wi‑Fi.</p>
+<p><b>हिन्दी:</b> मोबाइल Hotspot ON करें और PC को मोबाइल के Hotspot Wi‑Fi से connect करें।</p></div>
+
+<div class="step"><div class="n">2</div><h3>📶 Same Wi‑Fi</h3>
+<p><b>English:</b> Connect both Mobile and PC to the same Wi‑Fi router/network.</p>
+<p><b>हिन्दी:</b> मोबाइल और PC दोनों को एक ही Wi‑Fi router/network से connect करें।</p></div>
+
+<div class="step"><div class="n">3</div><h3>🔌 USB</h3>
+<p><b>English:</b> Connect Mobile to PC by USB. Enable USB Tethering if required by your setup.</p>
+<p><b>हिन्दी:</b> Mobile को USB से PC से connect करें। जरूरत हो तो USB Tethering ON करें।</p></div>
+
+<div class="step"><div class="n">4</div><h3>▶️ Start Web Server</h3>
+<p><b>English:</b> Open SoftAP Router and make sure its Web Server is running.</p>
+<p><b>हिन्दी:</b> SoftAP Router खोलें और सुनिश्चित करें कि Web Server चालू है।</p></div>
+</div>
+</section>
+
+<section class="card">
+<h2>🔗 Open Current WebUI / Current Address खोलें</h2>
+<p><b>English:</b> Enter the current IP and port shown by the SoftAP Router app.</p>
+<p><b>हिन्दी:</b> SoftAP Router app में दिखाई गई वर्तमान IP और port डालें।</p>
+<div class="url">
+<input id="u" placeholder="http://192.168.x.x:" autocomplete="off">
+<button class="secondary" onclick="copyUI()">Copy / कॉपी</button>
+</div>
+<div id="s" class="status">💡 Example / उदाहरण: <b>http://192.168.88.x </b></div>
+</section>
+
+<section class="card">
+<h2>🔄 IP Changed? / IP बदल गई?</h2>
+<p><b>English:</b> Android can assign a new IP after hotspot restart, Wi‑Fi change, or reconnect.</p>
+<p><b>हिन्दी:</b> Hotspot restart, Wi‑Fi change या reconnect के बाद Android नई IP दे सकता है।</p>
+<button class="primary" onclick="location.reload()">🔄 Try Again / पुनः प्रयास</button>
+</section>
+
+<section class="card">
+<h2>🛠️ Troubleshooting / समस्या समाधान</h2>
+<details><summary>WebUI नहीं खुल रहा</summary>
+<p>Web Server ON करें और PC को उसी network पर connect करें। VPN/Proxy को अस्थायी रूप से बंद करके भी देखें।</p></details>
+<details><summary>पुराना IP काम नहीं कर रहा</summary>
+<p>App में current/new IP देखें। पुराने IP को permanent न मानें।</p></details>
+<details><summary>PC Hotspot से connected है फिर भी page नहीं खुलता</summary>
+<p>PC का VPN/Proxy बंद करें और Windows Firewall में WebUI port block न होने दें।</p></details>
+<details><summary>USB connection</summary>
+<p>केवल USB cable से network जरूरी नहीं बनता। आपके setup में आवश्यक हो तो USB Tethering ON करें।</p></details>
+<div class="tip"><b>⚠️ Important:</b> 192.168.88.194 केवल example है। आपकी current IP अलग हो सकती है।</div>
+</section>
+
+<section class="card ok">
+<h2>✅ Quick Checklist / त्वरित जाँच</h2>
+<p>☐ Mobile Hotspot/Wi‑Fi ON &nbsp; ☐ PC सही network पर &nbsp; ☐ Web Server ON</p>
+<p>☐ Current IP सही &nbsp; ☐ Correct port &nbsp; ☐ VPN/Proxy blocking नहीं</p>
+</section>
+
+<footer>SoftAP Router • Local WebUI Recovery Page</footer>
+</div>
+
+<script>
+function norm(v){v=v.trim();if(!v)return "";return /^https?:\/\//i.test(v)?v:"http://"+v}
+function openUI(){let v=norm(document.getElementById("u").value),s=document.getElementById("s");if(!v){s.innerHTML="⚠️ Current WebUI address डालें।";return}try{new URL(v);s.innerHTML="🔗 Opening WebUI... / WebUI खोला जा रहा है...";location.href=v}catch(e){s.innerHTML="⚠️ Invalid address / गलत address।"}}
+async function copyUI(){let v=norm(document.getElementById("u").value),s=document.getElementById("s");if(!v){s.innerHTML="⚠️ पहले address डालें।";return}try{await navigator.clipboard.writeText(v);s.innerHTML="✅ Copied / कॉपी हो गया।"}catch(e){let x=document.getElementById("u");x.select();document.execCommand("copy");s.innerHTML="✅ Copied / कॉपी हो गया।"}}
+document.getElementById("u").addEventListener("keydown",e=>{if(e.key==="Enter")openUI()});
+</script>
+</body>
+</html>

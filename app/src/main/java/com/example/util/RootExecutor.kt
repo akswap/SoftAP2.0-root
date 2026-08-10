@@ -389,6 +389,41 @@ object RootExecutor {
         val clients = mutableListOf<ConnectedClient>()
         val macsAdded = mutableSetOf<String>()
 
+        // 0. Query iw station dump for per-client real-time PHY details
+        val stationMap = mutableMapOf<String, StationDetails>()
+        try {
+            val stationDumpRes = executePersistentCommand("iw dev wlan0 station dump 2>/dev/null || iw dev wlan1 station dump 2>/dev/null || iw dev ap0 station dump 2>/dev/null || iw dev wlan2 station dump 2>/dev/null")
+            if (stationDumpRes.success && stationDumpRes.output.isNotBlank()) {
+                val blocks = stationDumpRes.output.split("Station ")
+                for (block in blocks) {
+                    if (block.isBlank()) continue
+                    val lines = block.lines()
+                    val mac = lines.firstOrNull()?.split("\\s+".toRegex())?.firstOrNull()?.uppercase() ?: continue
+                    
+                    val txLine = lines.find { it.contains("tx bitrate", ignoreCase = true) } ?: ""
+                    val signalLine = lines.find { it.contains("signal:", ignoreCase = true) } ?: ""
+                    
+                    val txRateMatch = Regex("tx bitrate:\\s+([0-9.]+)\\s+MBit/s", RegexOption.IGNORE_CASE).find(txLine)
+                    val bwMatch = Regex("MBit/s\\s+([0-9]+)\\s*MHz", RegexOption.IGNORE_CASE).find(txLine)
+                    val mcsMatch = Regex("(?:EHT-MCS|HE-MCS|VHT-MCS|MCS)\\s+([0-9]+)", RegexOption.IGNORE_CASE).find(txLine)
+                    val nssMatch = Regex("(?:EHT-NSS|HE-NSS|VHT-NSS|NSS)\\s+([0-9]+)", RegexOption.IGNORE_CASE).find(txLine)
+                    val sigMatch = Regex("signal:\\s+(-\\d+\\s*dBm)", RegexOption.IGNORE_CASE).find(signalLine)
+
+                    val rate = txRateMatch?.groupValues?.get(1)?.toFloatOrNull()?.let {
+                        if (it >= 1000f) "${it.toInt()} Mbps" else "$it Mbps"
+                    } ?: "Unavailable"
+                    val bw = bwMatch?.groupValues?.get(1)?.let { "$it MHz" } ?: "Unknown"
+                    val mcs = mcsMatch?.groupValues?.get(1) ?: "Unknown"
+                    val nss = nssMatch?.groupValues?.get(1)?.let { "${it}x${it}" } ?: "Unknown"
+                    val sig = sigMatch?.groupValues?.get(1) ?: "Unknown"
+
+                    stationMap[mac] = StationDetails(rate, bw, mcs, nss, sig)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting station dump details", e)
+        }
+
         // 1. Check arp table
         try {
             val arpResult = executePersistentCommand("cat /proc/net/arp")
@@ -400,7 +435,20 @@ object RootExecutor {
                     val mac = parts[3].uppercase()
                     val iface = parts.last()
                     if (mac != "00:00:00:00:00:00" && !macsAdded.contains(mac)) {
-                        clients.add(ConnectedClient(ipAddress = ip, macAddress = mac, deviceName = "Client [ARP]", interfaceName = iface))
+                        val st = stationMap[mac]
+                        clients.add(
+                            ConnectedClient(
+                                ipAddress = ip,
+                                macAddress = mac,
+                                deviceName = "Client [ARP]",
+                                interfaceName = iface,
+                                actualPhyRate = st?.actualRate ?: "Unavailable",
+                                negotiatedWidth = st?.negotiatedWidth ?: "Unknown",
+                                mcs = st?.mcs ?: "Unknown",
+                                nss = st?.nss ?: "Unknown",
+                                signalDbm = st?.signalDbm ?: "Unknown"
+                            )
+                        )
                         macsAdded.add(mac)
                     }
                 }
@@ -420,12 +468,30 @@ object RootExecutor {
                         val mac = parts[1].uppercase()
                         val ip = parts[2]
                         val name = parts[3]
-                        val existingIndex = clients.indexOfFirst { it.macAddress == mac }
-                        if (existingIndex >= 0) {
-                            clients[existingIndex] = clients[existingIndex].copy(deviceName = name, ipAddress = ip)
-                        } else if (!macsAdded.contains(mac)) {
-                            clients.add(ConnectedClient(ipAddress = ip, macAddress = mac, deviceName = name, interfaceName = "wlan1"))
-                            macsAdded.add(mac)
+                        if (name.equals("/DATA/MISC/DHCP/DNSMASQ.LEASES", ignoreCase = true)) {
+                            // Skip this device
+                        } else {
+                            val existingIndex = clients.indexOfFirst { it.macAddress == mac }
+                            if (existingIndex >= 0) {
+                                val old = clients[existingIndex]
+                                clients[existingIndex] = old.copy(deviceName = name, ipAddress = ip)
+                            } else if (!macsAdded.contains(mac)) {
+                                val st = stationMap[mac]
+                                clients.add(
+                                    ConnectedClient(
+                                        ipAddress = ip,
+                                        macAddress = mac,
+                                        deviceName = name,
+                                        interfaceName = "wlan1",
+                                        actualPhyRate = st?.actualRate ?: "Unavailable",
+                                        negotiatedWidth = st?.negotiatedWidth ?: "Unknown",
+                                        mcs = st?.mcs ?: "Unknown",
+                                        nss = st?.nss ?: "Unknown",
+                                        signalDbm = st?.signalDbm ?: "Unknown"
+                                    )
+                                )
+                                macsAdded.add(mac)
+                            }
                         }
                     }
                 }
@@ -549,7 +615,14 @@ object RootExecutor {
         commands.add("iptables -I FORWARD 1 -i $downstream -o $upstream -j ACCEPT")
         commands.add("iptables -I FORWARD 1 -i $upstream -o $downstream -m state --state ESTABLISHED,RELATED -j ACCEPT")
         
-        // 4. Bypass Android default tethering routing table by looking up the main routing table
+        // 4. Bypass System Traffic Shaper / Increase performance
+        commands.add("tc qdisc del dev $downstream root 2>/dev/null || true")
+        commands.add("sysctl -w net.core.rmem_max=2621440 2>/dev/null || true")
+        commands.add("sysctl -w net.core.wmem_max=2621440 2>/dev/null || true")
+        commands.add("sysctl -w net.ipv4.tcp_rmem='4096 87380 6291456' 2>/dev/null || true")
+        commands.add("sysctl -w net.ipv4.tcp_wmem='4096 65536 6291456' 2>/dev/null || true")
+        
+        // 5. Bypass Android default tethering routing table by looking up the main routing table
         commands.add("ip rule del iif $downstream lookup main 2>/dev/null || true")
         commands.add("ip rule add iif $downstream lookup main")
         
@@ -590,13 +663,61 @@ object RootExecutor {
         }
         return RootResult(true, totalOutput.toString().trim())
     }
+
+    /**
+     * Executes `iw dev <iface> station dump` to get real-time PHY info.
+     */
+    fun getStationInfo(iface: String): RootResult {
+        return executePersistentCommand("iw dev $iface station dump")
+    }
+
+    /**
+     * Auto-detect active default upstream interface for internet (e.g. wlan0, rmnet_data0, ccmni0, tun0)
+     */
+    suspend fun detectUpstreamInterfaces(): List<String> {
+        val list = mutableListOf<String>()
+        val res = executeCommand("ip route show default 2>/dev/null || ip route show 2>/dev/null", null)
+        val output = res.output
+        val matches = Regex("dev\\s+(\\S+)").findAll(output)
+        for (m in matches) {
+            val iface = m.groupValues[1]
+            if (!iface.startsWith("rndis") && !iface.startsWith("usb") && !iface.startsWith("ncm") && !iface.startsWith("ap") && iface != "wlan1") {
+                if (!list.contains(iface)) list.add(iface)
+            }
+        }
+        val linkRes = executeCommand("ip link show", null)
+        for (line in linkRes.output.split("\n")) {
+            val parts = line.split("\\s+".toRegex()).filter { it.isNotBlank() }
+            for (part in parts) {
+                val clean = part.replace(":", "")
+                if (clean.startsWith("rmnet") || clean.startsWith("wlan0") || clean.startsWith("ccmni") || clean.startsWith("pdp") || clean.startsWith("tun") || clean.startsWith("wg")) {
+                    if (!list.contains(clean)) list.add(clean)
+                }
+            }
+        }
+        if (list.isEmpty()) list.add("wlan0")
+        return list
+    }
 }
 
 data class RootResult(val success: Boolean, val output: String)
+
+data class StationDetails(
+    val actualRate: String,
+    val negotiatedWidth: String,
+    val mcs: String,
+    val nss: String,
+    val signalDbm: String
+)
 
 data class ConnectedClient(
     val ipAddress: String,
     val macAddress: String,
     val deviceName: String,
-    val interfaceName: String
+    val interfaceName: String,
+    val actualPhyRate: String = "Unavailable",
+    val negotiatedWidth: String = "Unknown",
+    val mcs: String = "Unknown",
+    val nss: String = "Unknown",
+    val signalDbm: String = "Unknown"
 )

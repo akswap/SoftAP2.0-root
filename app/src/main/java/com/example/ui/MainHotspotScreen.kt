@@ -32,7 +32,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.data.HotspotProfile
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import android.content.Intent
+import android.net.Uri
 import com.example.ui.theme.SystemTerminalGreen
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -73,6 +80,9 @@ fun MainHotspotScreen(viewModel: HotspotViewModel) {
     val commandLogs by viewModel.commandLogs.collectAsState()
     val showNetworkSourceWarning by viewModel.showNetworkSourceWarning.collectAsState()
     val wifiPopupMessage by viewModel.wifiPopupMessage.collectAsState()
+
+    val isWebServerRunning by viewModel.isWebServerRunning.collectAsState()
+    val webServerUrl by viewModel.webServerUrl.collectAsState()
 
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -217,7 +227,15 @@ fun MainHotspotScreen(viewModel: HotspotViewModel) {
                     } else {
                         viewModel.toggleHotspot() 
                     }
-                }
+                },
+                onRestart = { viewModel.restartHotspot() }
+            )
+
+            // Embedded Router Web Admin Server Card
+            WebServerCard(
+                isRunning = isWebServerRunning,
+                serverUrl = webServerUrl,
+                onToggleServer = { viewModel.toggleEmbeddedWebServer(context) }
             )
 
             // Screen Content
@@ -409,146 +427,74 @@ fun StatusCard(
     mloEnabled: Boolean,
     region: String,
     activeBands: String,
-    onToggle: () -> Unit
+    onToggle: () -> Unit,
+    onRestart: () -> Unit = {}
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.2f,
-        targetValue = 0.8f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "alpha"
-    )
-
-    val scaleState by infiniteTransition.animateFloat(
-        initialValue = 1.0f,
-        targetValue = 1.15f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = EaseOutQuad),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "scale"
-    )
-
     Card(
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
         modifier = Modifier
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .padding(horizontal = 16.dp, vertical = 4.dp)
             .fillMaxWidth()
             .border(
                 1.dp,
-                if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f) else Color.Transparent,
-                RoundedCornerShape(16.dp)
+                if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Transparent,
+                RoundedCornerShape(12.dp)
             )
     ) {
-        Column(
+        Row(
             modifier = Modifier
-                .padding(14.dp)
+                .padding(horizontal = 14.dp, vertical = 10.dp)
                 .fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column {
+            Column {
+                Text(
+                    text = if (isActive) "Active Hotspot" else "Deactivated Hotspot",
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (isActive) SystemTerminalGreen else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                )
+                if (isActive && activeBands.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "HOTSPOT STATUS",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                        letterSpacing = 1.sp
-                    )
-                    Text(
-                        text = if (isActive) "ACTIVATED" else "DEACTIVATED",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                    )
-                }
-
-                // Pulsing indicator light
-                Box(
-                    modifier = Modifier
-                        .size(30.dp)
-                        .drawBehind {
-                            if (isActive) {
-                                drawCircle(
-                                    color = Color(0xFFFF3B30).copy(alpha = pulseAlpha * 0.3f),
-                                    radius = size.minDimension / 2 * scaleState
-                                )
-                            }
-                        }
-                        .clip(CircleShape)
-                        .background(
-                            if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = if (isActive) Icons.Default.NetworkWifi else Icons.Default.NetworkWifi1Bar,
-                        contentDescription = null,
-                        tint = if (isActive) Color.White else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-                        modifier = Modifier.size(15.dp)
+                        text = activeBands,
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = SystemTerminalGreen.copy(alpha = 0.85f)
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column {
+            if (isLoading) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        "Activate Hotspot",
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    if (isActive && activeBands.isNotEmpty()) {
-                        Text(
-                            text = activeBands,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = SystemTerminalGreen
-                        )
-                    }
-                }
-                if (isLoading) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            color = MaterialTheme.colorScheme.primary,
-                            strokeWidth = 2.dp
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Please wait...",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                } else {
-                    Switch(
-                        checked = isActive,
-                        onCheckedChange = { onToggle() },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = SystemTerminalGreen,
-                            uncheckedThumbColor = Color.White,
-                            uncheckedTrackColor = MaterialTheme.colorScheme.error
-                        )
+                        text = "Please wait...",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
+            } else {
+                Switch(
+                    checked = isActive,
+                    onCheckedChange = { onToggle() },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = SystemTerminalGreen,
+                        uncheckedThumbColor = Color.White,
+                        uncheckedTrackColor = MaterialTheme.colorScheme.error
+                    )
+                )
             }
         }
     }
@@ -599,14 +545,34 @@ fun HotspotConfigTab(
     var expandedBandwidth by remember { mutableStateOf(false) }
     var expandedChannel5g by remember { mutableStateOf(false) }
     var expandedChannel6g by remember { mutableStateOf(false) }
+    var isPasswordVisible by remember { mutableStateOf(false) }
 
-    val regions6g = listOf("US", "CA", "KR", "BR", "SA")
-    val regionsOther = listOf("IN", "US", "UK", "DE", "JP", "CN", "CA", "KR", "BR", "SA")
+    val regions6g = listOf("US", "IN", "EU", "JP", "GLOBAL")
+    val regionsOther = listOf("US", "IN", "EU", "JP", "GLOBAL")
     val regions = if (band6g) regions6g else regionsOther
-    val bandwidths = listOf("Auto", "20", "40", "80", "160", "320")
+    val bandwidths = remember(band2g, band5g, band6g) {
+        when {
+            band6g -> listOf("Auto", "20", "40", "80", "160", "320")
+            band5g -> listOf("Auto", "20", "40", "80", "160")
+            else -> listOf("Auto", "20", "40")
+        }
+    }
     val channels5g = listOf("Auto", "36", "40", "44", "48", "100", "149", "153", "157", "161", "165")
-    val channels6g = listOf("Auto", "37", "49", "53", "65", "69", "81", "85", "101", "117", "133", "149", "165", "181", "197")
-    val securityTypes = listOf("WPA3_PERSONAL", "WPA2", "OWE", "OPEN")
+    val bandwidth = channelBandwidth
+    val channels6g = remember(selectedRegion) {
+        if (selectedRegion == "IN") {
+            listOf("Auto", "37", "85")
+        } else {
+            listOf("Auto", "37", "53", "69", "85", "101", "117", "133", "149", "165", "181", "197", "213")
+        }
+    }
+    val securityTypes = remember(band6g) {
+        if (band6g) {
+            listOf("WPA3_PERSONAL", "OWE")
+        } else {
+            listOf("WPA3_PERSONAL", "WPA2", "OWE", "OPEN")
+        }
+    }
 
     fun getRegionDisplayName(code: String): String {
         return when (code) {
@@ -616,10 +582,9 @@ fun HotspotConfigTab(
             "BR" -> "BR (Brazil)"
             "SA" -> "SA (Saudi Arabia)"
             "IN" -> "IN (India)"
-            "UK" -> "UK (United Kingdom)"
-            "DE" -> "DE (Germany)"
+            "EU" -> "EU (European Union)"
             "JP" -> "JP (Japan)"
-            "CN" -> "CN (China)"
+            "GLOBAL" -> "GLOBAL (World)"
             else -> code
         }
     }
@@ -672,21 +637,6 @@ fun HotspotConfigTab(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                     }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(
-                            checked = allowOfflineHotspot,
-                            onCheckedChange = onAllowOfflineHotspotChange
-                        )
-                        Text(
-                            text = "Bypass Data/Wi-Fi Check (Offline Hotspot)",
-                            fontSize = 14.sp,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
                 }
             }
         }
@@ -704,7 +654,6 @@ fun HotspotConfigTab(
                         leadingIcon = { Icon(Icons.Default.Wifi, contentDescription = null) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        enabled = !isHotspotActive,
                         colors = TextFieldDefaults.colors(
                             focusedContainerColor = Color.Transparent,
                             unfocusedContainerColor = Color.Transparent
@@ -716,11 +665,19 @@ fun HotspotConfigTab(
                     OutlinedTextField(
                         value = password,
                         onValueChange = onPasswordChange,
-                        label = { Text("Password ") },
+                        label = { Text("Password") },
                         leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                        trailingIcon = {
+                            IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
+                                Icon(
+                                    imageVector = if (isPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                    contentDescription = if (isPasswordVisible) "Hide Password" else "Show Password"
+                                )
+                            }
+                        },
+                        visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        enabled = !isHotspotActive,
                         colors = TextFieldDefaults.colors(
                             focusedContainerColor = Color.Transparent,
                             unfocusedContainerColor = Color.Transparent
@@ -732,14 +689,21 @@ fun HotspotConfigTab(
                     // Security Dropdown
                     ExposedDropdownMenuBox(
                         expanded = expandedSecurity,
-                        onExpandedChange = { if (!isHotspotActive) expandedSecurity = !expandedSecurity }
+                        onExpandedChange = { expandedSecurity = !expandedSecurity }
                     ) {
+                        val displaySec = when (securityType) {
+                            "WPA3_PERSONAL" -> "WPA3 Personal (SAE)"
+                            "WPA2" -> "WPA2 Personal (PSK)"
+                            "OWE" -> "OWE (Enhanced Open)"
+                            "OPEN" -> "Open (No Security)"
+                            else -> securityType
+                        }
                         OutlinedTextField(
-                            value = securityType,
+                            value = displaySec,
                             onValueChange = {},
                             readOnly = true,
-                            enabled = !isHotspotActive,
-                            label = { Text("Security Protocol") },
+                            label = { Text("Security Mode / Protocol") },
+                            leadingIcon = { Icon(Icons.Default.Security, contentDescription = null) },
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedSecurity) },
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -754,8 +718,15 @@ fun HotspotConfigTab(
                             onDismissRequest = { expandedSecurity = false }
                         ) {
                             securityTypes.forEach { type ->
+                                val typeName = when (type) {
+                                    "WPA3_PERSONAL" -> "WPA3 Personal (SAE)"
+                                    "WPA2" -> "WPA2 Personal (PSK)"
+                                    "OWE" -> "OWE (Enhanced Open)"
+                                    "OPEN" -> "Open (No Security)"
+                                    else -> type
+                                }
                                 DropdownMenuItem(
-                                    text = { Text(type) },
+                                    text = { Text(typeName) },
                                     onClick = {
                                         onSecurityTypeChange(type)
                                         expandedSecurity = false
@@ -767,10 +738,6 @@ fun HotspotConfigTab(
                 }
             }
         }
-
-        
-
-
 
         item {
             Card(
@@ -789,18 +756,16 @@ fun HotspotConfigTab(
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
-                            
                         }
                         Switch(
                             checked = mloEnabled,
                             onCheckedChange = onMloEnabledChange,
-                            enabled = !isHotspotActive,
                             colors = SwitchDefaults.colors(
-                        checkedThumbColor = Color.White,
-                        checkedTrackColor = SystemTerminalGreen,
-                        uncheckedThumbColor = Color.White,
-                        uncheckedTrackColor = MaterialTheme.colorScheme.error
-                    )
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = SystemTerminalGreen,
+                                uncheckedThumbColor = Color.White,
+                                uncheckedTrackColor = MaterialTheme.colorScheme.error
+                            )
                         )
                     }
 
@@ -818,13 +783,9 @@ fun HotspotConfigTab(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        BandChip(label = "2.4 GHz", active = band2g, onToggle = onBand2gChange, enabled = !isHotspotActive)
-                        BandChip(label = "5.0 GHz", active = band5g, onToggle = onBand5gChange, enabled = !isHotspotActive)
-                        BandChip(label = "6.0 GHz (6E/7)", active = band6g, onToggle = onBand6gChange, enabled = !isHotspotActive)
-                    }
-
-                    if (mloEnabled) {
-                        
+                        BandChip(label = "2.4 GHz", active = band2g, onToggle = onBand2gChange, enabled = true)
+                        BandChip(label = "5.0 GHz", active = band5g, onToggle = onBand5gChange, enabled = true)
+                        BandChip(label = "6.0 GHz (6E/7)", active = band6g, onToggle = onBand6gChange, enabled = true)
                     }
 
                     Spacer(modifier = Modifier.height(4.dp))
@@ -837,13 +798,12 @@ fun HotspotConfigTab(
                     
                     ExposedDropdownMenuBox(
                         expanded = expandedBandwidth,
-                        onExpandedChange = { if (!isHotspotActive) expandedBandwidth = !expandedBandwidth }
+                        onExpandedChange = { expandedBandwidth = !expandedBandwidth }
                     ) {
                         OutlinedTextField(
                             value = "Bandwidth: $channelBandwidth",
                             onValueChange = {},
                             readOnly = true,
-                            enabled = !isHotspotActive,
                             label = { Text("Bandwidth (MHz)") },
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedBandwidth) },
                             modifier = Modifier
@@ -882,13 +842,12 @@ fun HotspotConfigTab(
                     
                     ExposedDropdownMenuBox(
                         expanded = expandedRegion,
-                        onExpandedChange = { if (!isHotspotActive) expandedRegion = !expandedRegion }
+                        onExpandedChange = { expandedRegion = !expandedRegion }
                     ) {
                         OutlinedTextField(
                             value = "Region Code: ${getRegionDisplayName(selectedRegion)}",
                             onValueChange = {},
                             readOnly = true,
-                            enabled = !isHotspotActive,
                             label = { Text("Wi-Fi Regulatory Domain") },
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedRegion) },
                             modifier = Modifier
@@ -927,13 +886,12 @@ fun HotspotConfigTab(
                     if (band5g) {
                         ExposedDropdownMenuBox(
                             expanded = expandedChannel5g,
-                            onExpandedChange = { if (!isHotspotActive) expandedChannel5g = !expandedChannel5g }
+                            onExpandedChange = { expandedChannel5g = !expandedChannel5g }
                         ) {
                             OutlinedTextField(
                                 value = "5GHz Channel: $channel5g",
                                 onValueChange = {},
                                 readOnly = true,
-                                enabled = !isHotspotActive,
                                 label = { Text("5GHz Channel") },
                                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedChannel5g) },
                                 modifier = Modifier
@@ -973,13 +931,12 @@ fun HotspotConfigTab(
                     if (band6g) {
                         ExposedDropdownMenuBox(
                             expanded = expandedChannel6g,
-                            onExpandedChange = { if (!isHotspotActive) expandedChannel6g = !expandedChannel6g }
+                            onExpandedChange = { expandedChannel6g = !expandedChannel6g }
                         ) {
                             OutlinedTextField(
                                 value = "6GHz Channel: $channel6g",
                                 onValueChange = {},
                                 readOnly = true,
-                                enabled = !isHotspotActive,
                                 label = { Text("6GHz Channel") },
                                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedChannel6g) },
                                 modifier = Modifier
@@ -1318,8 +1275,9 @@ fun SecurityFirewallTab(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
                                 Text(client.deviceName, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                                Text("IP: ${client.ipAddress}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-                                Text("MAC: ${client.macAddress}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
+                                Text("IP: ${client.ipAddress} | MAC: ${client.macAddress}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                                Text("Actual Negotiated PHY: ${client.actualPhyRate}", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                                Text("Width: ${client.negotiatedWidth} • MCS: ${client.mcs} • NSS: ${client.nss}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
                             }
                         }
 
@@ -1709,6 +1667,119 @@ fun VpnRouterTab(
 
         item {
             Spacer(modifier = Modifier.height(4.dp))
+        }
+    }
+}
+
+@Composable
+fun WebServerCard(
+    isRunning: Boolean,
+    serverUrl: String,
+    onToggleServer: () -> Unit
+) {
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
+
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        modifier = Modifier
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .fillMaxWidth()
+            .border(
+                1.dp,
+                if (isRunning) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else Color.Transparent,
+                RoundedCornerShape(16.dp)
+            )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Filled.Language,
+                        contentDescription = "Router Web Server",
+                        tint = if (isRunning) SystemTerminalGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "SoftAP Web Server",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(3.dp))
+                        if (isRunning) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = Color.Black
+                            ) {
+                                Text(
+                                    text = serverUrl,
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 16.sp,
+                                        letterSpacing = 2.sp
+                                    ),
+                                    color = Color.White,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+                        } else {
+                            Text(
+                                text = "Server Offline",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+                Switch(
+                    checked = isRunning,
+                    onCheckedChange = { onToggleServer() }
+                )
+            }
+
+            if (isRunning) {
+                Spacer(modifier = Modifier.height(12.dp))
+                var isCopied by remember { mutableStateOf(false) }
+                LaunchedEffect(isCopied) {
+                    if (isCopied) {
+                        delay(1000)
+                        isCopied = false
+                    }
+                }
+                Button(
+                    onClick = {
+                        clipboardManager.setText(AnnotatedString(serverUrl))
+                        isCopied = true
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isCopied) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    if (isCopied) {
+                        Text("Copied", fontSize = 13.sp, color = Color.White)
+                    } else {
+                        Icon(
+                            imageVector = Icons.Filled.ContentCopy,
+                            contentDescription = "Copy Web URL",
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Copy URL", fontSize = 13.sp)
+                    }
+                }
+            }
         }
     }
 }
