@@ -225,6 +225,7 @@ class HotspotViewModel(
     
     val channel5g = MutableStateFlow("Auto")
     val channel6g = MutableStateFlow("Auto")
+    val indoorAp6g = MutableStateFlow(true)
 
     val showNetworkSourceWarning = MutableStateFlow(false)
 
@@ -243,6 +244,7 @@ class HotspotViewModel(
             if (prefs.contains("channelBandwidth")) prefs.getString("channelBandwidth", null)?.let { channelBandwidth.value = it }
             if (prefs.contains("channel5g")) prefs.getString("channel5g", null)?.let { channel5g.value = it }
             if (prefs.contains("channel6g")) prefs.getString("channel6g", null)?.let { channel6g.value = it }
+            if (prefs.contains("indoorAp6g")) indoorAp6g.value = prefs.getBoolean("indoorAp6g", true)
             if (prefs.contains("selectedRegion")) prefs.getString("selectedRegion", null)?.let { selectedRegion.value = it }
         } catch (e: Exception) {
             Log.e("HotspotViewModel", "Failed to load persisted settings", e)
@@ -262,6 +264,7 @@ class HotspotViewModel(
                 .putString("channelBandwidth", channelBandwidth.value)
                 .putString("channel5g", channel5g.value)
                 .putString("channel6g", channel6g.value)
+                .putBoolean("indoorAp6g", indoorAp6g.value)
                 .putString("selectedRegion", selectedRegion.value)
                 .apply()
         } catch (e: Exception) {
@@ -387,7 +390,13 @@ class HotspotViewModel(
         return Pair(isConnected || wifiManager.isWifiEnabled, 0)
     }
 
+    @Volatile
+    private var _cachedRealPhyInfo: PhyInfo? = null
+
     private fun getRealPhyInfo(): PhyInfo? {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            return _cachedRealPhyInfo
+        }
         try {
             // 1. Try iw dev station dump for real-time PHY info
             val ifacesRes = RootExecutor.executePersistentCommand("iw dev | grep Interface | cut -f2 -d ' '")
@@ -419,7 +428,7 @@ class HotspotViewModel(
                         val txStr = if (txFloat >= 1000f) "${txFloat.toInt()} Mbps" else "$txBitrate Mbps"
                         val rxStr = if (rxFloat >= 1000f) "${rxFloat.toInt()} Mbps" else "$rxBitrate Mbps"
 
-                        return PhyInfo(
+                        val info = PhyInfo(
                             txRate = txStr,
                             rxRate = rxStr,
                             wifiType = if (bw == "320" || bw == "240") "Wi-Fi 7 ($bw MHz)" else "Wi-Fi 7 / 6E ($bw MHz)",
@@ -430,6 +439,8 @@ class HotspotViewModel(
                             guardInterval = gi,
                             channelWidth = "$bw MHz"
                         )
+                        _cachedRealPhyInfo = info
+                        return info
                     }
                 }
             }
@@ -448,7 +459,7 @@ class HotspotViewModel(
                         freq in 2400..2500 -> "802.11ax/n (2.4GHz)"
                         else -> "Unknown"
                     }
-                    return PhyInfo(
+                    val info = PhyInfo(
                         txRate = "$linkSpeed Mbps",
                         rxRate = "$linkSpeed Mbps",
                         wifiType = wifiType,
@@ -456,6 +467,8 @@ class HotspotViewModel(
                         source = "Driver / Android Framework (dumpsys)",
                         channelWidth = "${channelBandwidth.value} MHz"
                     )
+                    _cachedRealPhyInfo = info
+                    return info
                 }
             }
             return null
@@ -488,7 +501,17 @@ class HotspotViewModel(
         val isMlo = mloEnabled.value
         val force7 = forceWifi7.value
 
+        val activeBandsStr = _activeBands.value
+        val activeBwVal = if (_isHotspotActive.value && activeBandsStr.isNotBlank()) {
+            val parts = activeBandsStr.split("|")
+            val bwPart = parts.getOrNull(1)?.replace("MHz", "")?.trim()?.toIntOrNull()
+            bwPart
+        } else {
+            null
+        }
+
         val effectiveWidthInt = when {
+            activeBwVal != null -> activeBwVal
             configuredBwInt != null -> configuredBwInt
             is6g -> 320
             is5g -> 160
@@ -965,76 +988,118 @@ class HotspotViewModel(
             val isStaConnected = connInfo != null && connInfo.networkId != -1 && staFreq > 0
 
             var freqs = emptyList<Int>()
-            var bandwidth = channelBandwidth.value
+            var bandwidth = "20"
+            var detectedBw: String? = null
             var standard: String? = null
 
             for (i in 1..5) {
                 if (i > 1) delay(1200)
                 if (_isRootAvailable.value == true) {
-                    // 1. Try iw dev first as it directly reports AP interfaces
+                    // 1. Try hostapd_cli status first
+                    val hostapdResult = RootExecutor.executePersistentCommand(
+                        "hostapd_cli status 2>/dev/null || " +
+                        "hostapd_cli -i wlan0 status 2>/dev/null || " +
+                        "hostapd_cli -i wlan1 status 2>/dev/null || " +
+                        "hostapd_cli -i ap0 status 2>/dev/null"
+                    )
+                    if (hostapdResult.success && hostapdResult.output.isNotBlank()) {
+                        val lines = hostapdResult.output.split("\n")
+                        var hostapdFreq: Int? = null
+                        var hostapdBw: String? = null
+                        for (line in lines) {
+                            if (line.contains("freq=", ignoreCase = true)) {
+                                line.substringAfter("=").trim().toIntOrNull()?.let { hostapdFreq = it }
+                            }
+                            if (line.contains("eht_oper_chwidth=", ignoreCase = true)) {
+                                val valStr = line.substringAfter("=").trim()
+                                if (valStr == "2" || valStr.contains("320")) hostapdBw = "320"
+                                else if (valStr == "1" || valStr.contains("160")) hostapdBw = "160"
+                            } else if (line.contains("he_oper_chwidth=", ignoreCase = true) || line.contains("vht_oper_chwidth=", ignoreCase = true)) {
+                                val valStr = line.substringAfter("=").trim()
+                                if (valStr == "1" || valStr.contains("160")) hostapdBw = "160"
+                                else if (valStr == "0" || valStr.contains("80")) hostapdBw = "80"
+                            } else if (line.contains("width=", ignoreCase = true) || line.contains("bandwidth=", ignoreCase = true)) {
+                                val valStr = line.substringAfter("=").trim()
+                                if (valStr.contains("320")) hostapdBw = "320"
+                                else if (valStr.contains("160")) hostapdBw = "160"
+                                else if (valStr.contains("80")) hostapdBw = "80"
+                                else if (valStr.contains("40")) hostapdBw = "40"
+                                else if (valStr.contains("20")) hostapdBw = "20"
+                            }
+                        }
+                        if (hostapdFreq != null && hostapdFreq!! > 0) {
+                            freqs = listOf(hostapdFreq!!)
+                            if (hostapdBw != null) {
+                                detectedBw = hostapdBw
+                                break
+                            }
+                        }
+                    }
+
+                    // 2. Try iw dev
                     val iwResult = RootExecutor.executePersistentCommand("iw dev")
                     if (iwResult.success && iwResult.output.isNotBlank()) {
-                        val lines = iwResult.output.split("\n")
-                        var isApBlock = false
+                        val blocks = iwResult.output.split("Interface ")
                         val apFreqs = mutableListOf<Int>()
-                        var detectedBwFromIw: String? = null
-                        for (line in lines) {
-                            if (line.contains("Interface ", ignoreCase = true)) {
-                                isApBlock = line.contains("ap", ignoreCase = true) || line.contains("swlan", ignoreCase = true) || line.contains("wlan1", ignoreCase = true)
-                            } else if (line.contains("type AP", ignoreCase = true) || line.contains("type __ap", ignoreCase = true)) {
-                                isApBlock = true
-                            }
-                            if (isApBlock) {
-                                val chMatch = Regex("channel\\s+[0-9]+\\s+\\(([0-9]+)\\s*MHz\\)", RegexOption.IGNORE_CASE).find(line)
+                        var iwBw: String? = null
+                        for (block in blocks) {
+                            val isAp = block.contains("type AP", ignoreCase = true) || 
+                                       block.contains("type __ap", ignoreCase = true) || 
+                                       block.contains("ap0", ignoreCase = true) || 
+                                       block.contains("wlan1", ignoreCase = true) ||
+                                       block.contains("swlan", ignoreCase = true)
+                            if (isAp) {
+                                val chMatch = Regex("channel\\s+[0-9]+\\s+\\(([0-9]+)\\s*MHz\\)", RegexOption.IGNORE_CASE).find(block)
                                 if (chMatch != null) {
                                     chMatch.groupValues[1].toIntOrNull()?.let { apFreqs.add(it) }
                                 }
-                                val widthMatch = Regex("width:\\s*([0-9]+)\\s*MHz", RegexOption.IGNORE_CASE).find(line)
+                                val widthMatch = Regex("width:\\s*([0-9]+)\\s*MHz", RegexOption.IGNORE_CASE).find(block)
                                 if (widthMatch != null) {
-                                    detectedBwFromIw = widthMatch.groupValues[1]
+                                    iwBw = widthMatch.groupValues[1]
                                 }
                             }
                         }
                         if (apFreqs.isNotEmpty()) {
                             freqs = apFreqs.distinct()
-                            if (detectedBwFromIw != null) {
-                                bandwidth = detectedBwFromIw
+                            if (iwBw != null) {
+                                detectedBw = iwBw
+                                break
                             }
-                            break
                         }
                     }
 
-                    // 2. Try parsing from SoftApInfo specifically
-                    val softApInfoResult = RootExecutor.executePersistentCommand("dumpsys wifi | grep -i SoftApInfo")
+                    // 3. Try parsing from SoftApInfo specifically
+                    val softApInfoResult = RootExecutor.executePersistentCommand("dumpsys wifi")
                     if (softApInfoResult.success && softApInfoResult.output.isNotBlank()) {
                         val infoBlocks = Regex("SoftApInfo\\s*\\{([^}]+)\\}", RegexOption.IGNORE_CASE).findAll(softApInfoResult.output).toList()
                         if (infoBlocks.isNotEmpty()) {
                             val parsedFreqs = mutableListOf<Int>()
-                            var parsedBandwidth = bandwidth
-                            var parsedStandard: String? = null
+                            var parsedBwStr: String? = null
                             for (block in infoBlocks) {
                                 val blockStr = block.groupValues[1]
                                 val freqMatch = Regex("frequency\\s*=\\s*([0-9]+)", RegexOption.IGNORE_CASE).find(blockStr)
                                 val f = freqMatch?.groupValues?.get(1)?.toIntOrNull()
                                 if (f != null && f > 0) parsedFreqs.add(f)
-                                val bwMatch = Regex("bandwidth\\s*=\\s*([0-9]+)", RegexOption.IGNORE_CASE).find(blockStr)
-                                val bwVal = bwMatch?.groupValues?.get(1)?.toIntOrNull()
-                                if (bwVal != null) {
-                                    parsedBandwidth = when (bwVal) {
-                                        0, 1, 2 -> "20"
-                                        3 -> "40"
-                                        4 -> "80"
-                                        6 -> "160"
-                                        11 -> "320"
-                                        else -> parsedBandwidth
+                                val bwMatch = Regex("bandwidth\\s*=\\s*([^,\n}]+)", RegexOption.IGNORE_CASE).find(blockStr)
+                                val bwStr = bwMatch?.groupValues?.get(1)?.trim()
+                                if (bwStr != null) {
+                                    val bwInt = bwStr.toIntOrNull()
+                                    parsedBwStr = when {
+                                        bwStr.contains("320") || bwInt == 5 || bwInt == 11 -> "320"
+                                        bwStr.contains("160") || bwInt == 3 || bwInt == 4 || bwInt == 6 -> "160"
+                                        bwStr.contains("80") || bwInt == 2 -> "80"
+                                        bwStr.contains("40") || bwInt == 1 -> "40"
+                                        bwStr.contains("20") || bwInt == 0 -> "20"
+                                        else -> null
                                     }
                                 }
                             }
                             if (parsedFreqs.isNotEmpty()) {
                                 freqs = parsedFreqs.distinct()
-                                bandwidth = parsedBandwidth
-                                standard = parsedStandard
-                                break
+                                if (parsedBwStr != null) {
+                                    detectedBw = parsedBwStr
+                                    break
+                                }
                             }
                         }
                     }
@@ -1046,17 +1111,21 @@ class HotspotViewModel(
             if (freqs.isNotEmpty()) {
                 val phyInfo = getPhyRateAndWifiType()
                 val phyRate = phyInfo.txRate
-                val userBwInt = channelBandwidth.value.replace("MHz", "").trim().toIntOrNull()
 
                 val has6g = freqs.any { it in 5955..7115 }
                 val has5g = freqs.any { it in 5170..5825 }
                 val maxAllowedBw = if (has6g) 320 else if (has5g) 160 else 40
 
-                val effectiveBwInt = if (userBwInt != null) {
-                    minOf(userBwInt, maxAllowedBw)
+                val effectiveBwInt = if (detectedBw != null) {
+                    val detInt = detectedBw!!.toIntOrNull() ?: 20
+                    minOf(detInt, maxAllowedBw)
                 } else {
-                    val detectedInt = bandwidth.toIntOrNull() ?: (if (has6g) 320 else if (has5g) 160 else 20)
-                    minOf(detectedInt, maxAllowedBw)
+                    val userBwInt = channelBandwidth.value.replace("MHz", "").trim().toIntOrNull()
+                    if (userBwInt != null) {
+                        minOf(userBwInt, maxAllowedBw)
+                    } else {
+                        if (has6g) 320 else if (has5g) 160 else 20
+                    }
                 }
                 bandwidth = effectiveBwInt.toString()
 
@@ -1616,6 +1685,7 @@ class HotspotViewModel(
                         mloEnabled = mloEnabled.value,
                         useTetheringCmd = configWritten,
                         forceWifi7 = forceWifi7.value,
+                        indoorAp6g = indoorAp6g.value,
                         repository = repository
                     )
                     
@@ -1707,6 +1777,7 @@ class HotspotViewModel(
                     mloEnabled = mloEnabled.value,
                     useTetheringCmd = configWritten,
                     forceWifi7 = forceWifi7.value,
+                    indoorAp6g = indoorAp6g.value,
                     repository = repository
                 )
                 if (result.success) {
@@ -1812,6 +1883,7 @@ class HotspotViewModel(
                 channelBandwidth = channelBandwidth.value,
                 channel5g = channel5g.value,
                 channel6g = channel6g.value,
+                indoorAp6g = indoorAp6g.value,
                 region = selectedRegion.value
             )
             repository.insertProfile(profile)
@@ -1829,6 +1901,7 @@ class HotspotViewModel(
         channelBandwidth.value = profile.channelBandwidth
         channel5g.value = profile.channel5g
         channel6g.value = profile.channel6g
+        indoorAp6g.value = profile.indoorAp6g
         selectedRegion.value = profile.region
     }
 
@@ -1869,6 +1942,165 @@ class HotspotViewModel(
         }
         updateSettingsBasedOnBandsAndMlo()
         savePersistedSettings()
+    }
+
+    fun setIndoorAp6g(enabled: Boolean) {
+        if (indoorAp6g.value == enabled) return
+        indoorAp6g.value = enabled
+        savePersistedSettings()
+
+        if (_isHotspotActive.value && !_isHotspotLoading.value && band6g.value) {
+            viewModelScope.launch {
+                _isHotspotLoading.value = true
+                val modeDisplay = if (enabled) "Indoor AP (LPI Mode - Max Power)" else "Standard Portable (VLP Mode)"
+                _lastTerminalOutput.value = "[6GHz POWER MODE CHANGED]\nSwitching 6GHz to $modeDisplay..."
+
+                val context = getApplication<Application>()
+                val bandsList = mutableListOf<String>()
+                if (band2g.value) bandsList.add("2G")
+                if (band5g.value) bandsList.add("5G")
+                if (band6g.value) bandsList.add("6G")
+
+                var configWritten = false
+                if (_hasWriteSettingsPermission.value && !forceDirectCli.value) {
+                    configWritten = writeConfigToSystemSettings()
+                }
+
+                if (_isRootAvailable.value == true) {
+                    val result = RootExecutor.configureAndStartSoftAp(
+                        ssid = ssid.value,
+                        pass = password.value,
+                        secType = securityType.value,
+                        bands = bandsList,
+                        region = selectedRegion.value,
+                        channelBandwidth = channelBandwidth.value,
+                        channel5g = channel5g.value,
+                        channel6g = channel6g.value,
+                        mloEnabled = mloEnabled.value,
+                        useTetheringCmd = configWritten,
+                        forceWifi7 = forceWifi7.value,
+                        indoorAp6g = enabled,
+                        repository = repository
+                    )
+                    if (result.success) {
+                        _isHotspotActive.value = true
+                        _activeBands.value = computeInitialActiveBands(context)
+                        _lastTerminalOutput.value = "[6GHz POWER APPLIED]\n6GHz $modeDisplay applied successfully!\n" + result.output
+                        refreshConnectedClients()
+                        updateRealActiveChannels()
+                    } else {
+                        _lastTerminalOutput.value = "[POWER MODE FAILED]\nFailed to set 6GHz power mode: " + result.output
+                    }
+                }
+                _isHotspotLoading.value = false
+            }
+        }
+    }
+
+    fun selectChannel6g(newChannel: String) {
+        if (channel6g.value == newChannel) return
+        channel6g.value = newChannel
+        savePersistedSettings()
+
+        if (_isHotspotActive.value && !_isHotspotLoading.value) {
+            viewModelScope.launch {
+                _isHotspotLoading.value = true
+                val chDisplay = if (newChannel == "Auto") "37 (Auto)" else newChannel
+                _lastTerminalOutput.value = "[INSTANT CHANNEL SHIFT]\nShifting 6GHz Hotspot to Channel $chDisplay..."
+
+                val context = getApplication<Application>()
+                val bandsList = mutableListOf<String>()
+                if (band2g.value) bandsList.add("2G")
+                if (band5g.value) bandsList.add("5G")
+                if (band6g.value) bandsList.add("6G")
+
+                var configWritten = false
+                if (_hasWriteSettingsPermission.value && !forceDirectCli.value) {
+                    configWritten = writeConfigToSystemSettings()
+                }
+
+                if (_isRootAvailable.value == true) {
+                    val result = RootExecutor.configureAndStartSoftAp(
+                        ssid = ssid.value,
+                        pass = password.value,
+                        secType = securityType.value,
+                        bands = bandsList,
+                        region = selectedRegion.value,
+                        channelBandwidth = channelBandwidth.value,
+                        channel5g = channel5g.value,
+                        channel6g = newChannel,
+                        mloEnabled = mloEnabled.value,
+                        useTetheringCmd = configWritten,
+                        forceWifi7 = forceWifi7.value,
+                        indoorAp6g = indoorAp6g.value,
+                        repository = repository
+                    )
+                    if (result.success) {
+                        _isHotspotActive.value = true
+                        _activeBands.value = computeInitialActiveBands(context)
+                        _lastTerminalOutput.value = "[CHANNEL SHIFT SUCCESS]\n6GHz Hotspot shifted to Channel $chDisplay successfully!\n" + result.output
+                        refreshConnectedClients()
+                        updateRealActiveChannels()
+                    } else {
+                        _lastTerminalOutput.value = "[CHANNEL SHIFT FAILED]\nFailed to shift channel: " + result.output
+                    }
+                }
+                _isHotspotLoading.value = false
+            }
+        }
+    }
+
+    fun selectChannel5g(newChannel: String) {
+        if (channel5g.value == newChannel) return
+        channel5g.value = newChannel
+        savePersistedSettings()
+
+        if (_isHotspotActive.value && !_isHotspotLoading.value) {
+            viewModelScope.launch {
+                _isHotspotLoading.value = true
+                val chDisplay = if (newChannel == "Auto") "Auto" else newChannel
+                _lastTerminalOutput.value = "[INSTANT CHANNEL SHIFT]\nShifting 5GHz Hotspot to Channel $chDisplay..."
+
+                val context = getApplication<Application>()
+                val bandsList = mutableListOf<String>()
+                if (band2g.value) bandsList.add("2G")
+                if (band5g.value) bandsList.add("5G")
+                if (band6g.value) bandsList.add("6G")
+
+                var configWritten = false
+                if (_hasWriteSettingsPermission.value && !forceDirectCli.value) {
+                    configWritten = writeConfigToSystemSettings()
+                }
+
+                if (_isRootAvailable.value == true) {
+                    val result = RootExecutor.configureAndStartSoftAp(
+                        ssid = ssid.value,
+                        pass = password.value,
+                        secType = securityType.value,
+                        bands = bandsList,
+                        region = selectedRegion.value,
+                        channelBandwidth = channelBandwidth.value,
+                        channel5g = newChannel,
+                        channel6g = channel6g.value,
+                        mloEnabled = mloEnabled.value,
+                        useTetheringCmd = configWritten,
+                        forceWifi7 = forceWifi7.value,
+                        indoorAp6g = indoorAp6g.value,
+                        repository = repository
+                    )
+                    if (result.success) {
+                        _isHotspotActive.value = true
+                        _activeBands.value = computeInitialActiveBands(context)
+                        _lastTerminalOutput.value = "[CHANNEL SHIFT SUCCESS]\n5GHz Hotspot shifted to Channel $chDisplay successfully!\n" + result.output
+                        refreshConnectedClients()
+                        updateRealActiveChannels()
+                    } else {
+                        _lastTerminalOutput.value = "[CHANNEL SHIFT FAILED]\nFailed to shift channel: " + result.output
+                    }
+                }
+                _isHotspotLoading.value = false
+            }
+        }
     }
 
     fun setMloEnabled(enabled: Boolean) {

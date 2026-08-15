@@ -17,6 +17,7 @@ data class HotspotProfile(
     val channelBandwidth: String = "320",
     val channel5g: String = "Auto",
     val channel6g: String = "Auto",
+    val indoorAp6g: Boolean = true,
     val region: String, // US, UK, IN, JP, etc.
     val timestamp: Long = System.currentTimeMillis()
 )

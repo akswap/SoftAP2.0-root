@@ -882,7 +882,7 @@ class EmbeddedRouterServer(
                 "ssid": "$ssid",
                 "activeBands": "$activeBandName",
                 "channel": "$channelStr",
-                "channelWidth": "${detailedPhy.configuredWidth}",
+                "channelWidth": "$bwStr",
                 "configuredWidth": "${detailedPhy.configuredWidth}",
                 "wifiStandard": "${detailedPhy.wifiStandard}",
                 "gatewayIp": "${getGatewayIp()}",
@@ -1246,6 +1246,7 @@ class EmbeddedRouterServer(
         val bandInfo = getLiveActiveBandAndChannel()
         val activeBandName = bandInfo.activeBandName
         val activeChannel = bandInfo.activeChannel
+        val bwStr = bandInfo.activeWidth
         val txDetails = viewModel.getDetectedTxPowerInfo()
         val json = """
             {
@@ -1259,11 +1260,14 @@ class EmbeddedRouterServer(
                 "band2g": ${viewModel.band2g.value},
                 "band5g": ${viewModel.band5g.value},
                 "band6g": ${viewModel.band6g.value},
+                "indoorAp6g": ${viewModel.indoorAp6g.value},
                 "band": "${viewModel.getConfiguredBandString()}",
                 "configuredBand": "${viewModel.getConfiguredBandString()}",
                 "activeBand": "$activeBandName",
                 "activeBands": "$activeBandName",
                 "channel": "$activeChannel",
+                "softApActive": ${viewModel.isHotspotActive.value},
+                "channelWidth": "$bwStr",
                 "channelBandwidth": "${if (viewModel.channelBandwidth.value == "Auto") "Auto" else viewModel.channelBandwidth.value + "MHz"}",
                 "configuredWidth": "${detailedPhy.configuredWidth}",
                 "negotiatedWidth": "${detailedPhy.negotiatedWidth}",
@@ -1316,6 +1320,11 @@ class EmbeddedRouterServer(
         val band = parseJsonValue(body, "band")
         val ch = parseJsonValue(body, "channel")
         val country = parseJsonValue(body, "country")
+        val indoorAp = parseJsonValue(body, "indoorAp6g")
+
+        if (!indoorAp.isNullOrBlank()) {
+            viewModel.indoorAp6g.value = indoorAp.toBoolean()
+        }
 
         if (!ssid.isNullOrBlank()) viewModel.ssid.value = ssid
         if (!pass.isNullOrBlank()) viewModel.password.value = pass
@@ -1339,8 +1348,8 @@ class EmbeddedRouterServer(
             }
         }
         if (!ch.isNullOrBlank()) {
-            if (viewModel.band6g.value) viewModel.channel6g.value = ch
-            else viewModel.channel5g.value = ch
+            if (viewModel.band6g.value) viewModel.selectChannel6g(ch)
+            else viewModel.selectChannel5g(ch)
         }
 
         viewModel.savePersistedSettings()
@@ -3889,7 +3898,15 @@ class EmbeddedRouterServer(
                 if (document.getElementById('ssidVal')) document.getElementById('ssidVal').innerText = data.ssid || 'N/A';
                 if (document.getElementById('ovBand')) document.getElementById('ovBand').innerText = data.activeBands || 'N/A';
                 if (document.getElementById('ovChannel')) document.getElementById('ovChannel').innerText = data.channel || 'Auto';
-                if (document.getElementById('ovWidth')) document.getElementById('ovWidth').innerText = data.configuredWidth || data.channelWidth || 'Auto';
+                if (document.getElementById('ovWidth')) {
+                    const realW = data.channelWidth ? data.channelWidth.replace('MHz', '').trim() : '';
+                    const confW = data.configuredWidth ? data.configuredWidth.replace('MHz', '').replace('(Auto)', '').trim() : '';
+                    if (realW && confW && realW !== confW && data.softApActive) {
+                        document.getElementById('ovWidth').innerHTML = '<span style="color:#22c55e;">' + realW + ' MHz (Active)</span> <span style="font-size:0.7rem; color:var(--text-sub);">(Selected: ' + confW + ' MHz)</span>';
+                    } else {
+                        document.getElementById('ovWidth').innerText = (realW ? realW + ' MHz' : '') || data.configuredWidth || 'Auto';
+                    }
+                }
                 if (document.getElementById('ovStandard')) document.getElementById('ovStandard').innerText = data.wifiStandard || 'N/A';
                 if (document.getElementById('ovTheoreticalPhy')) document.getElementById('ovTheoreticalPhy').innerText = data.theoreticalMaxPhyRate || 'N/A';
 
@@ -4772,7 +4789,14 @@ class EmbeddedRouterServer(
                 }
 
                 // Live Telemetry (ALWAYS updated on background polling)
-                var widthDisplay = d.configuredWidth || d.channelWidth || (d.channelBandwidth ? d.channelBandwidth : 'Auto');
+                var realW = d.channelWidth ? d.channelWidth.replace('MHz', '').trim() : '';
+                var confW = d.configuredWidth ? d.configuredWidth.replace('MHz', '').replace('(Auto)', '').trim() : '';
+                var widthDisplay = d.configuredWidth || 'Auto';
+                if (d.softApActive && realW) {
+                    widthDisplay = realW + ' MHz';
+                } else if (realW) {
+                    widthDisplay = realW + ' MHz';
+                }
                 if (document.getElementById('wlLiveSsid')) document.getElementById('wlLiveSsid').innerText = d.ssid || 'Hotspot';
                 if (document.getElementById('wlLiveBand')) document.getElementById('wlLiveBand').innerText = (d.activeBand || d.activeBands || d.band || 'Auto') + ' / Ch ' + (d.channel || '36') + ' / ' + widthDisplay;
                 if (document.getElementById('wlLiveClients')) document.getElementById('wlLiveClients').innerText = (d.connectedClients || 0) + ' / ' + (d.maxClients || 32);

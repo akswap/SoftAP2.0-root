@@ -172,6 +172,7 @@ object RootExecutor {
         mloEnabled: Boolean,
         useTetheringCmd: Boolean,
         forceWifi7: Boolean = true,
+        indoorAp6g: Boolean = true,
         repository: HotspotRepository
     ): RootResult {
         val bandProps = when {
@@ -202,6 +203,23 @@ object RootExecutor {
             
             // Also force IEEE 802.11be in hostapd confs
             executeCommand("sed -i 's/ieee80211ax=1/ieee80211ax=1\nieee80211be=1\neht_oper_chwidth=$ehtWidth/g' /data/vendor/wifi/hostapd/hostapd.conf", repository)
+        }
+
+        if (bands.contains("6G")) {
+            if (indoorAp6g) {
+                // Configure 6GHz Low Power Indoor (LPI) mode
+                executeCommand("sed -i 's/^gIndoorChannelSupport=0/gIndoorChannelSupport=1/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
+                executeCommand("sed -i 's/^g6GhzIndoorAp=0/g6GhzIndoorAp=1/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
+                executeCommand("sed -i 's/^g6ghzPowerMode=1/g6ghzPowerMode=0/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
+                executeCommand("sed -i 's/^gIndoorChannelSupport=0/gIndoorChannelSupport=1/g' /vendor/etc/wifi/WCNSS_qcom_cfg.ini", repository)
+                executeCommand("sed -i 's/^g6GhzIndoorAp=0/g6GhzIndoorAp=1/g' /vendor/etc/wifi/WCNSS_qcom_cfg.ini", repository)
+                executeCommand("sed -i 's/he_6ghz_reg_pwr_type=[0-9]/he_6ghz_reg_pwr_type=0/g' /data/vendor/wifi/hostapd/hostapd.conf", repository)
+            } else {
+                // Configure standard portable/VLP power mode
+                executeCommand("sed -i 's/^g6GhzIndoorAp=1/g6GhzIndoorAp=0/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
+                executeCommand("sed -i 's/^g6ghzPowerMode=0/g6ghzPowerMode=1/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
+                executeCommand("sed -i 's/he_6ghz_reg_pwr_type=[0-9]/he_6ghz_reg_pwr_type=2/g' /data/vendor/wifi/hostapd/hostapd.conf", repository)
+            }
         }
 
         // Android SoftAP standard CLI parameters and config setups:
@@ -235,6 +253,21 @@ object RootExecutor {
             commands.add("setprop persist.sys.wifi.softap.be 1")
             commands.add("setprop persist.vendor.wifi.softap.be 1")
             commands.add("setprop persist.vendor.wifi.eht_supported 1")
+            if (indoorAp6g && bands.contains("6G")) {
+                commands.add("setprop persist.vendor.wifi.softap.6g_indoor 1")
+                commands.add("setprop vendor.wifi.softap.6g_indoor 1")
+                commands.add("setprop vendor.wifi.softap.pwr_mode lpi")
+                commands.add("setprop wifi.softap.indoor 1")
+                commands.add("iwpriv wlan0 set_indoor 1")
+                commands.add("iwpriv wlan0 setPwrMode 0")
+            } else if (bands.contains("6G")) {
+                commands.add("setprop persist.vendor.wifi.softap.6g_indoor 0")
+                commands.add("setprop vendor.wifi.softap.6g_indoor 0")
+                commands.add("setprop vendor.wifi.softap.pwr_mode vlp")
+                commands.add("setprop wifi.softap.indoor 0")
+                commands.add("iwpriv wlan0 set_indoor 0")
+                commands.add("iwpriv wlan0 setPwrMode 2")
+            }
             if (channelBandwidth == "320") {
                 commands.add("setprop wifi.softap.bandwidth 320")
                 commands.add("setprop persist.vendor.wifi.softap.320mhz 1")

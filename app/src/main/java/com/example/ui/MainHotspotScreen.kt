@@ -55,6 +55,7 @@ fun MainHotspotScreen(viewModel: HotspotViewModel) {
     val channelBandwidth by viewModel.channelBandwidth.collectAsState()
     val channel5g by viewModel.channel5g.collectAsState()
     val channel6g by viewModel.channel6g.collectAsState()
+    val indoorAp6g by viewModel.indoorAp6g.collectAsState()
     val selectedRegion by viewModel.selectedRegion.collectAsState()
     val hasWriteSettingsPermission by viewModel.hasWriteSettingsPermission.collectAsState()
     val forceDirectCli by viewModel.forceDirectCli.collectAsState()
@@ -260,9 +261,11 @@ fun MainHotspotScreen(viewModel: HotspotViewModel) {
                         channelBandwidth = channelBandwidth,
                         onChannelBandwidthChange = { viewModel.channelBandwidth.value = it },
                         channel5g = channel5g,
-                        onChannel5gChange = { viewModel.channel5g.value = it },
+                        onChannel5gChange = { viewModel.selectChannel5g(it) },
                         channel6g = channel6g,
-                        onChannel6gChange = { viewModel.channel6g.value = it },
+                        onChannel6gChange = { viewModel.selectChannel6g(it) },
+                        indoorAp6g = indoorAp6g,
+                        onIndoorAp6gChange = { viewModel.setIndoorAp6g(it) },
                         selectedRegion = selectedRegion,
                         onRegionChange = { viewModel.changeRegion(it) },
                         hasWriteSettingsPermission = hasWriteSettingsPermission,
@@ -524,6 +527,8 @@ fun HotspotConfigTab(
     onChannel5gChange: (String) -> Unit,
     channel6g: String,
     onChannel6gChange: (String) -> Unit,
+    indoorAp6g: Boolean,
+    onIndoorAp6gChange: (Boolean) -> Unit,
     selectedRegion: String,
     onRegionChange: (String) -> Unit,
     hasWriteSettingsPermission: Boolean,
@@ -960,6 +965,57 @@ fun HotspotConfigTab(
                                         }
                                     )
                                 }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (indoorAp6g) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Home,
+                                        contentDescription = null,
+                                        tint = if (indoorAp6g) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Column {
+                                        Text(
+                                            text = "6GHz Indoor AP (LPI Mode)",
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 14.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = if (indoorAp6g) "High Power LPI Mode (Up to 30 dBm, No AFC required)" else "Portable VLP Mode (Standard Power)",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            lineHeight = 14.sp
+                                        )
+                                    }
+                                }
+                                Switch(
+                                    checked = indoorAp6g,
+                                    onCheckedChange = onIndoorAp6gChange,
+                                    modifier = Modifier.padding(start = 8.dp)
+                                )
                             }
                         }
                     }
@@ -1768,7 +1824,7 @@ fun WebServerCard(
                     )
                 ) {
                     if (isCopied) {
-                        Text("Copied", fontSize = 13.sp, color = Color.White)
+                        Text("Copied", fontSize = 13.sp)
                     } else {
                         Icon(
                             imageVector = Icons.Filled.ContentCopy,
