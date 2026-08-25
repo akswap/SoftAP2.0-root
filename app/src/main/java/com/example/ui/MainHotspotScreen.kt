@@ -112,27 +112,77 @@ fun MainHotspotScreen(viewModel: HotspotViewModel) {
     Scaffold(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.background)
-                    .padding(WindowInsets.statusBars.asPaddingValues())
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
+            Surface(
+                color = MaterialTheme.colorScheme.background,
+                tonalElevation = 2.dp,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Icon(
-                    imageVector = Icons.Filled.WifiTethering,
-                    contentDescription = "Hotspot Icon",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(28.dp)
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Text(
-                    text = "SoftAP",
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 1.2.sp,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(WindowInsets.statusBars.asPaddingValues())
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Filled.WifiTethering,
+                                    contentDescription = "Hotspot Logo",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = "SoftAP Controller",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 18.sp,
+                                letterSpacing = 0.5.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Advanced Wi-Fi SoftAP Engine",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(100),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.padding(start = 8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Security,
+                                contentDescription = "Root Mode",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "ROOT",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.primary,
+                                letterSpacing = 1.sp
+                            )
+                        }
+                    }
+                }
             }
         },
         containerColor = MaterialTheme.colorScheme.background
@@ -259,7 +309,13 @@ fun MainHotspotScreen(viewModel: HotspotViewModel) {
                         mloEnabled = mloEnabled,
                         onMloEnabledChange = { viewModel.setMloEnabled(it) },
                         channelBandwidth = channelBandwidth,
-                        onChannelBandwidthChange = { viewModel.channelBandwidth.value = it },
+                        onChannelBandwidthChange = {
+                            viewModel.channelBandwidth.value = it
+                            if (it == "320" && band6g) {
+                                viewModel.channel6g.value = "Auto"
+                            }
+                            viewModel.savePersistedSettings()
+                        },
                         channel5g = channel5g,
                         onChannel5gChange = { viewModel.selectChannel5g(it) },
                         channel6g = channel6g,
@@ -434,55 +490,92 @@ fun StatusCard(
     onRestart: () -> Unit = {}
 ) {
     Card(
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         modifier = Modifier
-            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .padding(horizontal = 16.dp, vertical = 6.dp)
             .fillMaxWidth()
             .border(
                 1.dp,
-                if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Transparent,
-                RoundedCornerShape(12.dp)
+                if (isActive) SystemTerminalGreen.copy(alpha = 0.4f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                RoundedCornerShape(16.dp)
             )
     ) {
         Row(
             modifier = Modifier
-                .padding(horizontal = 14.dp, vertical = 10.dp)
+                .padding(horizontal = 16.dp, vertical = 14.dp)
                 .fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Column {
-                Text(
-                    text = if (isActive) "Active Hotspot" else "Deactivated Hotspot",
-                    fontSize = 12.5.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (isActive) SystemTerminalGreen else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                )
-                if (isActive && activeBands.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = activeBands,
-                        fontSize = 10.5.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = SystemTerminalGreen.copy(alpha = 0.85f)
-                    )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = if (isActive) SystemTerminalGreen.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.size(44.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Filled.WifiTethering,
+                            contentDescription = null,
+                            tint = if (isActive) SystemTerminalGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(14.dp))
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            shape = CircleShape,
+                            color = if (isActive) SystemTerminalGreen else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier.size(8.dp)
+                        ) {}
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (isActive) "Hotspot Active" else "Hotspot Offline",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isActive) SystemTerminalGreen else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    if (isActive && activeBands.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text(
+                            text = activeBands,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else if (!isActive) {
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text(
+                            text = "Tap switch to enable SoftAP",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Normal,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                        )
+                    }
                 }
             }
 
             if (isLoading) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(22.dp),
                         color = MaterialTheme.colorScheme.primary,
-                        strokeWidth = 2.dp
+                        strokeWidth = 2.5.dp
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Please wait...",
-                        fontSize = 11.sp,
+                        text = "Updating...",
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -495,7 +588,7 @@ fun StatusCard(
                         checkedThumbColor = Color.White,
                         checkedTrackColor = SystemTerminalGreen,
                         uncheckedThumbColor = Color.White,
-                        uncheckedTrackColor = MaterialTheme.colorScheme.error
+                        uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant
                     )
                 )
             }
@@ -557,8 +650,8 @@ fun HotspotConfigTab(
     val regions = if (band6g) regions6g else regionsOther
     val bandwidths = remember(band2g, band5g, band6g) {
         when {
-            band6g -> listOf("Auto", "20", "40", "80", "160", "320")
-            band5g -> listOf("Auto", "20", "40", "80", "160")
+            band6g -> listOf("Auto", "80", "160", "320")
+            band5g -> listOf("Auto", "80", "160")
             else -> listOf("Auto", "20", "40")
         }
     }
@@ -825,9 +918,12 @@ fun HotspotConfigTab(
                         ) {
                             bandwidths.forEach { bw ->
                                 DropdownMenuItem(
-                                    text = { Text(if (bw == "Auto") "Auto" else "$bw MHz") },
+                                    text = { Text(if (bw == "Auto") "Auto" else if (bw == "320") "320 MHz (Auto ACS)" else "$bw MHz") },
                                     onClick = {
                                         onChannelBandwidthChange(bw)
+                                        if (bw == "320") {
+                                            onChannel6gChange("Auto")
+                                        }
                                         expandedBandwidth = false
                                     }
                                 )
@@ -939,7 +1035,7 @@ fun HotspotConfigTab(
                             onExpandedChange = { expandedChannel6g = !expandedChannel6g }
                         ) {
                             OutlinedTextField(
-                                value = "6GHz Channel: $channel6g",
+                                value = if (channel6g == "Auto") "6GHz Channel: Auto (ACS)" else "6GHz Channel: $channel6g",
                                 onValueChange = {},
                                 readOnly = true,
                                 label = { Text("6GHz Channel") },
@@ -958,64 +1054,13 @@ fun HotspotConfigTab(
                             ) {
                                 channels6g.forEach { ch ->
                                     DropdownMenuItem(
-                                        text = { Text(ch) },
+                                        text = { Text(if (ch == "Auto") "Auto (ACS)" else "Channel $ch") },
                                         onClick = {
                                             onChannel6gChange(ch)
                                             expandedChannel6g = false
                                         }
                                     )
                                 }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Card(
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (indoorAp6g) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
-                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-                            ),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Home,
-                                        contentDescription = null,
-                                        tint = if (indoorAp6g) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Column {
-                                        Text(
-                                            text = "6GHz Indoor AP (LPI Mode)",
-                                            fontWeight = FontWeight.SemiBold,
-                                            fontSize = 14.sp,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Text(
-                                            text = if (indoorAp6g) "High Power LPI Mode (Up to 30 dBm, No AFC required)" else "Portable VLP Mode (Standard Power)",
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            lineHeight = 14.sp
-                                        )
-                                    }
-                                }
-                                Switch(
-                                    checked = indoorAp6g,
-                                    onCheckedChange = onIndoorAp6gChange,
-                                    modifier = Modifier.padding(start = 8.dp)
-                                )
                             }
                         }
                     }
@@ -1224,13 +1269,21 @@ fun BandChip(
     FilterChip(
         selected = active,
         onClick = { if (enabled) onToggle(!active) },
-        label = { Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+        label = { Text(label, fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
         enabled = enabled,
         colors = FilterChipDefaults.filterChipColors(
-            selectedContainerColor = SystemTerminalGreen.copy(alpha = 0.3f),
+            selectedContainerColor = SystemTerminalGreen.copy(alpha = 0.25f),
             selectedLabelColor = SystemTerminalGreen,
-            containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.3f),
-            labelColor = MaterialTheme.colorScheme.error
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+        ),
+        border = FilterChipDefaults.filterChipBorder(
+            enabled = enabled,
+            selected = active,
+            selectedBorderColor = SystemTerminalGreen,
+            borderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+            borderWidth = 1.dp,
+            selectedBorderWidth = 1.5.dp
         )
     )
 }
@@ -1737,17 +1790,18 @@ fun WebServerCard(
     val clipboardManager = LocalClipboardManager.current
 
     Card(
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         modifier = Modifier
             .padding(horizontal = 16.dp, vertical = 6.dp)
             .fillMaxWidth()
             .border(
-                1.dp,
-                if (isRunning) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else Color.Transparent,
-                RoundedCornerShape(16.dp)
+                1.5.dp,
+                if (isRunning) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                RoundedCornerShape(20.dp)
             )
     ) {
         Column(
@@ -1759,31 +1813,40 @@ fun WebServerCard(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Filled.Language,
-                        contentDescription = "Router Web Server",
-                        tint = if (isRunning) SystemTerminalGreen else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
+                    Surface(
+                        shape = CircleShape,
+                        color = if (isRunning) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Filled.Language,
+                                contentDescription = "Router Web Server",
+                                tint = if (isRunning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(
-                            text = "SoftAP Web Server",
+                            text = "Router Web Admin",
                             style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
                         )
-                        Spacer(modifier = Modifier.height(3.dp))
+                        Spacer(modifier = Modifier.height(2.dp))
                         if (isRunning) {
                             Surface(
-                                shape = RoundedCornerShape(6.dp),
+                                shape = RoundedCornerShape(8.dp),
                                 color = Color.Black
                             ) {
                                 Text(
                                     text = serverUrl,
                                     style = MaterialTheme.typography.bodyMedium.copy(
                                         fontWeight = FontWeight.Bold,
-                                        fontSize = 16.sp,
-                                        letterSpacing = 2.sp
+                                        fontSize = 13.5.sp,
+                                        letterSpacing = 1.sp
                                     ),
                                     color = Color.White,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
@@ -1791,16 +1854,23 @@ fun WebServerCard(
                             }
                         } else {
                             Text(
-                                text = "Server Offline",
+                                text = "Web Management Interface Offline",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
                 }
+
                 Switch(
                     checked = isRunning,
-                    onCheckedChange = { onToggleServer() }
+                    onCheckedChange = { onToggleServer() },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = MaterialTheme.colorScheme.primary,
+                        uncheckedThumbColor = Color.White,
+                        uncheckedTrackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                    )
                 )
             }
 
@@ -1813,26 +1883,47 @@ fun WebServerCard(
                         isCopied = false
                     }
                 }
-                Button(
-                    onClick = {
-                        clipboardManager.setText(AnnotatedString(serverUrl))
-                        isCopied = true
-                    },
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isCopied) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary
-                    )
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (isCopied) {
-                        Text("Copied", fontSize = 13.sp)
-                    } else {
+                    OutlinedButton(
+                        onClick = {
+                            clipboardManager.setText(AnnotatedString(serverUrl))
+                            isCopied = true
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
                         Icon(
-                            imageVector = Icons.Filled.ContentCopy,
+                            imageVector = if (isCopied) Icons.Default.Check else Icons.Filled.ContentCopy,
                             contentDescription = "Copy Web URL",
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Copy URL", fontSize = 13.sp)
+                        Text(if (isCopied) "Copied" else "Copy URL", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    Button(
+                        onClick = {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(serverUrl))
+                            context.startActivity(intent)
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.OpenInNew,
+                            contentDescription = "Open Web UI",
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Open Web UI", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }

@@ -329,6 +329,11 @@ class EmbeddedRouterServer(
 
             when {
                 url == "/" || url == "/index.html" -> sendResponse(output, 200, "OK", "text/html", getDashboardHtml())
+                url.contains("connecttest.txt") -> sendResponse(output, 200, "OK", "text/plain", "Microsoft Connect Test")
+                url.contains("ncsi.txt") -> sendResponse(output, 200, "OK", "text/plain", "Microsoft NCSI")
+                url.contains("generate_204") || url.contains("gen_204") || url.contains("check_network_status") -> sendResponse(output, 204, "No Content", "text/plain", "")
+                url.contains("hotspot-detect.html") || url.contains("library/test/success.html") -> sendResponse(output, 200, "OK", "text/html", "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>")
+                url.contains("success.txt") -> sendResponse(output, 200, "OK", "text/plain", "success")
                 url == "/api/status" -> handleGetStatus(output)
                 url == "/api/check_internet" -> handleCheckInternet(output)
                 url == "/api/devices" -> handleGetDevices(output)
@@ -357,7 +362,7 @@ class EmbeddedRouterServer(
                 url == "/api/system/logs" -> handleGetSystemLogs(output)
                 url == "/api/firewall/port_forward" && method == "POST" -> handlePortForward(body, output)
                 url == "/api/dhcp/static_lease" && method == "POST" -> handleStaticLease(body, output)
-                else -> sendResponse(output, 200, "OK", "text/html", getRecoveryHtml())
+                else -> sendResponse(output, 200, "OK", "text/html", getDashboardHtml())
             }
 
         } catch (e: Exception) {
@@ -708,7 +713,7 @@ class EmbeddedRouterServer(
             val chMatches = Regex("Ch:([0-9]+)").findAll(bandsPart).map { it.groupValues[1] }.toList()
             val cleanedChannel = when {
                 chMatches.isNotEmpty() -> chMatches.joinToString(" / ")
-                cleanedBandName.contains("6GHz") -> if (viewModel.channel6g.value != "Auto") viewModel.channel6g.value else "37"
+                cleanedBandName.contains("6GHz") -> if (viewModel.channel6g.value != "Auto") viewModel.channel6g.value else "Auto (ACS)"
                 cleanedBandName.contains("5GHz") -> if (viewModel.channel5g.value != "Auto") viewModel.channel5g.value else "36"
                 else -> "6"
             }
@@ -728,7 +733,7 @@ class EmbeddedRouterServer(
         val configuredBandName = if (configuredBands.isNotEmpty()) configuredBands.joinToString(" + ") else "5GHz"
 
         val configuredChannel = when {
-            viewModel.band6g.value -> if (viewModel.channel6g.value == "Auto") "37 (Auto)" else viewModel.channel6g.value
+            viewModel.band6g.value -> if (viewModel.channel6g.value == "Auto") "Auto (ACS)" else viewModel.channel6g.value
             viewModel.band5g.value -> if (viewModel.channel5g.value == "Auto") "36 (Auto)" else viewModel.channel5g.value
             else -> "6 (Auto)"
         }
@@ -1329,7 +1334,13 @@ class EmbeddedRouterServer(
         if (!ssid.isNullOrBlank()) viewModel.ssid.value = ssid
         if (!pass.isNullOrBlank()) viewModel.password.value = pass
         if (!sec.isNullOrBlank()) viewModel.securityType.value = sec
-        if (!bw.isNullOrBlank()) viewModel.channelBandwidth.value = bw.replace("MHz", "").trim()
+        if (!bw.isNullOrBlank()) {
+            val cleanBw = bw.replace("MHz", "").trim()
+            viewModel.channelBandwidth.value = cleanBw
+            if (cleanBw == "320" && viewModel.band6g.value) {
+                viewModel.channel6g.value = "Auto"
+            }
+        }
         if (!country.isNullOrBlank()) viewModel.selectedRegion.value = country
         if (!band.isNullOrBlank()) {
             when {
@@ -1341,6 +1352,9 @@ class EmbeddedRouterServer(
                 }
                 band == "6GHz" || (band.contains("6") && !band.contains("2.4") && !band.contains("5")) -> {
                     viewModel.band2g.value = false; viewModel.band5g.value = false; viewModel.band6g.value = true
+                    if (viewModel.channelBandwidth.value == "320") {
+                        viewModel.channel6g.value = "Auto"
+                    }
                 }
                 band == "Auto" || (band.contains("2.4") && band.contains("5")) -> {
                     viewModel.band2g.value = true; viewModel.band5g.value = true; viewModel.band6g.value = false
@@ -1348,8 +1362,13 @@ class EmbeddedRouterServer(
             }
         }
         if (!ch.isNullOrBlank()) {
-            if (viewModel.band6g.value) viewModel.selectChannel6g(ch)
-            else viewModel.selectChannel5g(ch)
+            if (viewModel.band6g.value) {
+                if (viewModel.channelBandwidth.value == "320") {
+                    viewModel.selectChannel6g("Auto")
+                } else {
+                    viewModel.selectChannel6g(ch)
+                }
+            } else viewModel.selectChannel5g(ch)
         }
 
         viewModel.savePersistedSettings()
@@ -2625,11 +2644,7 @@ class EmbeddedRouterServer(
     }
 
     private fun getRecoveryHtml(): String {
-        return try {
-            context.assets.open("recovery.html").bufferedReader().use { it.readText() }
-        } catch (e: Exception) {
-            "<html><body><h1>Recovery Page Unavailable</h1></body></html>"
-        }
+        return getDashboardHtml()
     }
 
     private fun getDashboardHtml(): String {
@@ -4603,12 +4618,10 @@ class EmbeddedRouterServer(
                     chanHtml += '<option value="' + item.ch + '">Channel ' + item.ch + tag + ' (5 GHz - ' + freq + ' MHz)</option>';
                 });
                 widthHtml = '<option value="Auto">Auto</option>' +
-                            '<option value="20MHz">20 MHz (Low Congestion)</option>' +
-                            '<option value="40MHz">40 MHz (Standard Dual)</option>' +
                             '<option value="80MHz">80 MHz (High Throughput)</option>' +
                             '<option value="160MHz" selected>160 MHz (Max 160MHz Performance)</option>';
             } else if (selectedBand === '6GHz') {
-                chanHtml += '<option value="Auto">Auto (Ch 37 Default)</option>';
+                chanHtml += '<option value="Auto">Auto (ACS Mode)</option>';
                 var countryEl = document.getElementById('wifiCountry');
                 var currentCountry = countryEl ? countryEl.value : 'US';
                 var ch6g = (currentCountry === 'IN') ? [37, 85] : [37, 53, 69, 85, 101, 117, 133, 149, 165, 181, 197, 213];
@@ -4617,19 +4630,15 @@ class EmbeddedRouterServer(
                     chanHtml += '<option value="' + ch + '">Channel ' + ch + ' (6 GHz - ' + freq + ' MHz)</option>';
                 });
                 widthHtml = '<option value="Auto">Auto</option>' +
-                            '<option value="20MHz">20 MHz</option>' +
-                            '<option value="40MHz">40 MHz</option>' +
                             '<option value="80MHz">80 MHz</option>' +
                             '<option value="160MHz">160 MHz (Default)</option>' +
-                            '<option value="320MHz">320 MHz (Max 320MHz Extreme)</option>';
+                            '<option value="320MHz">320 MHz (Auto ACS Mode)</option>';
             } else { // Auto / Dual-Band
                 chanHtml += '<option value="Auto">Auto (Smart Channel Selector)</option>';
                 [1,6,11,36,40,44,149,157,37,65,97].forEach(function(ch) {
                     chanHtml += '<option value="' + ch + '">Channel ' + ch + '</option>';
                 });
                 widthHtml = '<option value="Auto">Auto</option>' +
-                            '<option value="20MHz">20 MHz</option>' +
-                            '<option value="40MHz">40 MHz</option>' +
                             '<option value="80MHz">80 MHz</option>' +
                             '<option value="160MHz">160 MHz</option>' +
                             '<option value="320MHz">320 MHz</option>';
@@ -4638,14 +4647,6 @@ class EmbeddedRouterServer(
             chanSelect.innerHTML = chanHtml;
             widthSelect.innerHTML = widthHtml;
 
-            if (!resetDefaults && currentChan && Array.from(chanSelect.options).some(function(o) { return o.value === currentChan; })) {
-                chanSelect.value = currentChan;
-            } else if (Array.from(chanSelect.options).some(function(o) { return o.value === 'Auto'; })) {
-                chanSelect.value = 'Auto';
-            } else if (chanSelect.options.length > 0) {
-                chanSelect.value = chanSelect.options[0].value;
-            }
-
             if (!resetDefaults && currentWidth && Array.from(widthSelect.options).some(function(o) { return o.value === currentWidth; })) {
                 widthSelect.value = currentWidth;
             } else {
@@ -4653,6 +4654,16 @@ class EmbeddedRouterServer(
                 else if (selectedBand === '5GHz') widthSelect.value = '160MHz';
                 else if (selectedBand === '2.4GHz') widthSelect.value = '40MHz';
                 else widthSelect.value = '160MHz';
+            }
+
+            if (widthSelect.value === '320MHz' || widthSelect.value === '320') {
+                chanSelect.value = 'Auto';
+            } else if (!resetDefaults && currentChan && Array.from(chanSelect.options).some(function(o) { return o.value === currentChan; })) {
+                chanSelect.value = currentChan;
+            } else if (Array.from(chanSelect.options).some(function(o) { return o.value === 'Auto'; })) {
+                chanSelect.value = 'Auto';
+            } else if (chanSelect.options.length > 0) {
+                chanSelect.value = chanSelect.options[0].value;
             }
         }
 

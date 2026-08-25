@@ -184,7 +184,6 @@ object RootExecutor {
         changeRegion(region, repository)
         
         if (forceWifi7 || channelBandwidth == "320") {
-            val ehtWidth = if (channelBandwidth == "320") "2" else "1"
             // Force WiFi 7 (802.11be / EHT) & 320MHz in WCNSS_qcom_cfg.ini
             executeCommand("sed -i 's/^enable_11be=0/enable_11be=1/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
             executeCommand("sed -i 's/^gEnable11be=0/gEnable11be=1/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
@@ -200,9 +199,6 @@ object RootExecutor {
             executeCommand("sed -i 's/^gEnableEht=0/gEnableEht=1/g' /vendor/etc/wifi/WCNSS_qcom_cfg.ini", repository)
             executeCommand("sed -i 's/^gEnable320MHz6GHz=0/gEnable320MHz6GHz=1/g' /vendor/etc/wifi/WCNSS_qcom_cfg.ini", repository)
             executeCommand("sed -i 's/^gEnable320MHz=0/gEnable320MHz=1/g' /vendor/etc/wifi/WCNSS_qcom_cfg.ini", repository)
-            
-            // Also force IEEE 802.11be in hostapd confs
-            executeCommand("sed -i 's/ieee80211ax=1/ieee80211ax=1\nieee80211be=1\neht_oper_chwidth=$ehtWidth/g' /data/vendor/wifi/hostapd/hostapd.conf", repository)
         }
 
         if (bands.contains("6G")) {
@@ -213,14 +209,131 @@ object RootExecutor {
                 executeCommand("sed -i 's/^g6ghzPowerMode=1/g6ghzPowerMode=0/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
                 executeCommand("sed -i 's/^gIndoorChannelSupport=0/gIndoorChannelSupport=1/g' /vendor/etc/wifi/WCNSS_qcom_cfg.ini", repository)
                 executeCommand("sed -i 's/^g6GhzIndoorAp=0/g6GhzIndoorAp=1/g' /vendor/etc/wifi/WCNSS_qcom_cfg.ini", repository)
-                executeCommand("sed -i 's/he_6ghz_reg_pwr_type=[0-9]/he_6ghz_reg_pwr_type=0/g' /data/vendor/wifi/hostapd/hostapd.conf", repository)
             } else {
                 // Configure standard portable/VLP power mode
                 executeCommand("sed -i 's/^g6GhzIndoorAp=1/g6GhzIndoorAp=0/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
                 executeCommand("sed -i 's/^g6ghzPowerMode=0/g6ghzPowerMode=1/g' /mnt/vendor/persist/wlan/WCNSS_qcom_cfg.ini", repository)
-                executeCommand("sed -i 's/he_6ghz_reg_pwr_type=[0-9]/he_6ghz_reg_pwr_type=2/g' /data/vendor/wifi/hostapd/hostapd.conf", repository)
             }
         }
+
+        // Calculate dynamic operating parameters
+        val is6g = bands.contains("6G")
+        val is5g = bands.contains("5G")
+
+        val selectedBandStr = when {
+            is6g -> "6G"
+            is5g -> "5G"
+            else -> "2G"
+        }
+
+        val primaryChannelInt = when {
+            is6g -> channel6g.toIntOrNull() ?: 37
+            is5g -> channel5g.toIntOrNull() ?: 149
+            else -> 6
+        }
+
+        val selectedBwMHzStr = when {
+            channelBandwidth == "Auto" -> if (is6g) "320" else if (is5g) "160" else "20"
+            else -> channelBandwidth
+        }
+
+        val derivedOpClass: Int
+        val derivedEhtOperChwidth: Int
+        val derivedEhtCenterSegment: Int
+        val derivedHeOperChwidth: Int
+        val derivedHeCenterSegment: Int
+
+        if (is6g || primaryChannelInt > 233) {
+            when (selectedBwMHzStr) {
+                "320" -> {
+                    derivedOpClass = 137
+                    derivedEhtOperChwidth = 2
+                    derivedEhtCenterSegment = if (primaryChannelInt < 33) 31 else (((primaryChannelInt - 33) / 64) * 64 + 63)
+                    derivedHeOperChwidth = 2
+                    derivedHeCenterSegment = ((primaryChannelInt - 1) / 32) * 32 + 15
+                }
+                "160" -> {
+                    derivedOpClass = 134
+                    derivedEhtOperChwidth = 1
+                    derivedEhtCenterSegment = ((primaryChannelInt - 1) / 32) * 32 + 15
+                    derivedHeOperChwidth = 2
+                    derivedHeCenterSegment = ((primaryChannelInt - 1) / 32) * 32 + 15
+                }
+                "80" -> {
+                    derivedOpClass = 133
+                    derivedEhtOperChwidth = 0
+                    derivedEhtCenterSegment = ((primaryChannelInt - 1) / 16) * 16 + 7
+                    derivedHeOperChwidth = 1
+                    derivedHeCenterSegment = ((primaryChannelInt - 1) / 16) * 16 + 7
+                }
+                "40" -> {
+                    derivedOpClass = 132
+                    derivedEhtOperChwidth = 0
+                    derivedEhtCenterSegment = primaryChannelInt
+                    derivedHeOperChwidth = 0
+                    derivedHeCenterSegment = primaryChannelInt
+                }
+                else -> {
+                    derivedOpClass = 131
+                    derivedEhtOperChwidth = 0
+                    derivedEhtCenterSegment = primaryChannelInt
+                    derivedHeOperChwidth = 0
+                    derivedHeCenterSegment = primaryChannelInt
+                }
+            }
+        } else if (is5g) {
+            when (selectedBwMHzStr) {
+                "160" -> {
+                    derivedOpClass = 129
+                    derivedEhtOperChwidth = 1
+                    derivedEhtCenterSegment = if (primaryChannelInt in 36..64) 50 else 114
+                    derivedHeOperChwidth = 2
+                    derivedHeCenterSegment = derivedEhtCenterSegment
+                }
+                "80" -> {
+                    derivedOpClass = 128
+                    derivedEhtOperChwidth = 0
+                    derivedEhtCenterSegment = ((primaryChannelInt - 36) / 16) * 16 + 42
+                    derivedHeOperChwidth = 1
+                    derivedHeCenterSegment = derivedEhtCenterSegment
+                }
+                "40" -> {
+                    derivedOpClass = 126
+                    derivedEhtOperChwidth = 0
+                    derivedEhtCenterSegment = primaryChannelInt
+                    derivedHeOperChwidth = 0
+                    derivedHeCenterSegment = primaryChannelInt
+                }
+                else -> {
+                    derivedOpClass = 115
+                    derivedEhtOperChwidth = 0
+                    derivedEhtCenterSegment = primaryChannelInt
+                    derivedHeOperChwidth = 0
+                    derivedHeCenterSegment = primaryChannelInt
+                }
+            }
+        } else {
+            derivedOpClass = 81
+            derivedEhtOperChwidth = 0
+            derivedEhtCenterSegment = primaryChannelInt
+            derivedHeOperChwidth = 0
+            derivedHeCenterSegment = primaryChannelInt
+        }
+
+        // Diagnostic log
+        val diagLog = """
+[HOSTAPD CONFIG INJECTION]
+selectedBand=$selectedBandStr
+selectedBandwidthMHz=$selectedBwMHzStr
+primaryChannel=$primaryChannelInt
+derivedOpClass=$derivedOpClass
+derivedEhtOperChwidth=$derivedEhtOperChwidth
+derivedEhtCenterSegment=$derivedEhtCenterSegment
+derivedHeOperChwidth=$derivedHeOperChwidth
+derivedHeCenterSegment=$derivedHeCenterSegment
+""".trimIndent()
+
+        Log.i(TAG, diagLog)
 
         // Android SoftAP standard CLI parameters and config setups:
         val commands = mutableListOf<String>()
@@ -333,35 +446,24 @@ object RootExecutor {
             }
 
             val bwArg = when (channelBandwidth) {
-                "20", "40", "80", "160" -> "-w $channelBandwidth"
-                "320" -> "-w 160" // Enforce 160MHz base for system cmd wifi so hardware fallback lands on 160MHz instead of 20MHz default
-                else -> if (bands.contains("6G")) "-w 160" else ""
+                "20", "40", "80", "160", "320" -> "-w $channelBandwidth"
+                else -> if (bands.contains("6G")) "-w 320" else ""
             }
 
             // Calculate frequencies from channels
             val freqs = mutableListOf<Int>()
             val explicitCh5g = channel5g != "Auto" && channel5g.toIntOrNull() != null
-            val explicitCh6g = channel6g != "Auto" && channel6g.toIntOrNull() != null
+            val explicitCh6g = channel6g != "Auto" && channelBandwidth != "320" && channel6g.toIntOrNull() != null
 
-            if (explicitCh5g || explicitCh6g || bands.contains("6G")) {
-                // If any channel is explicitly set or 6GHz is enabled, provide -f with frequencies
-                // (native 6GHz auto-channel selection fails without explicit channel command, so channel 37/6135MHz is commanded by default)
+            if (explicitCh5g || explicitCh6g) {
                 if (bands.contains("2G")) {
                     freqs.add(2437) // Default Ch 6 for 2.4GHz
                 }
-                if (bands.contains("5G")) {
-                    if (explicitCh5g) {
-                        freqs.add(5000 + (channel5g.toInt() * 5))
-                    } else {
-                        freqs.add(5200) // Default Ch 40 for 5GHz
-                    }
+                if (bands.contains("5G") && explicitCh5g) {
+                    freqs.add(5000 + (channel5g.toInt() * 5))
                 }
-                if (bands.contains("6G")) {
-                    if (explicitCh6g) {
-                        freqs.add(5950 + (channel6g.toInt() * 5))
-                    } else {
-                        freqs.add(6135) // Default Ch 37 (PSC channel in 37-85 range) for 6GHz
-                    }
+                if (bands.contains("6G") && explicitCh6g) {
+                    freqs.add(5950 + (channel6g.toInt() * 5))
                 }
             }
 
@@ -376,7 +478,7 @@ object RootExecutor {
             commands.add(cmdWifiArgs)
         }
 
-        // Executing sequence of commands
+        // Executing startup sequence
         val fullCmd = commands.joinToString(" ; ")
         val res = executeCommand(fullCmd, repository)
         val totalOutput = StringBuilder().append("$ $fullCmd\n").append(res.output).append("\n\n")
@@ -384,6 +486,36 @@ object RootExecutor {
         val hasActivationCommands = commands.any { it.contains("start-") || it.contains("tether start") || it.contains("service call") }
         val anyStartCommandSucceeded = hasActivationCommands && res.success
         val success = if (hasActivationCommands) anyStartCommandSucceeded else true
+
+        // Post-startup hostapd configuration injection
+        val postStartCmds = listOf(
+            "sleep 0.8",
+            "for conf in /data/vendor/wifi/hostapd/hostapd_wlan2.conf /data/vendor/wifi/hostapd/hostapd.conf /data/vendor/wifi/hostapd/hostapd_wlan1.conf /data/vendor/wifi/hostapd/hostapd_ap0.conf; do if [ -f \"\$conf\" ]; then " +
+            "sed -i '/^op_class=/d' \"\$conf\" ; " +
+            "sed -i '/^eht_oper_chwidth=/d' \"\$conf\" ; " +
+            "sed -i '/^eht_oper_centr_freq_seg0_idx=/d' \"\$conf\" ; " +
+            "sed -i '/^he_oper_chwidth=/d' \"\$conf\" ; " +
+            "sed -i '/^he_oper_centr_freq_seg0_idx=/d' \"\$conf\" ; " +
+            "sed -i '/^vht_oper_chwidth=/d' \"\$conf\" ; " +
+            "sed -i '/^vht_oper_centr_freq_seg0_idx=/d' \"\$conf\" ; " +
+            "echo \"op_class=$derivedOpClass\" >> \"\$conf\" ; " +
+            "echo \"eht_oper_chwidth=$derivedEhtOperChwidth\" >> \"\$conf\" ; " +
+            "echo \"eht_oper_centr_freq_seg0_idx=$derivedEhtCenterSegment\" >> \"\$conf\" ; " +
+            "echo \"he_oper_chwidth=$derivedHeOperChwidth\" >> \"\$conf\" ; " +
+            "echo \"he_oper_centr_freq_seg0_idx=$derivedHeCenterSegment\" >> \"\$conf\" ; " +
+            "echo \"vht_oper_chwidth=$derivedHeOperChwidth\" >> \"\$conf\" ; " +
+            "echo \"vht_oper_centr_freq_seg0_idx=$derivedHeCenterSegment\" >> \"\$conf\" ; " +
+            "fi ; done",
+            "hostapd_cli -i wlan2 set op_class $derivedOpClass 2>/dev/null || true",
+            "hostapd_cli -i wlan2 set eht_oper_chwidth $derivedEhtOperChwidth 2>/dev/null || true",
+            "hostapd_cli -i wlan2 set eht_oper_centr_freq_seg0_idx $derivedEhtCenterSegment 2>/dev/null || true",
+            "hostapd_cli -i wlan2 set he_oper_chwidth $derivedHeOperChwidth 2>/dev/null || true",
+            "hostapd_cli -i wlan2 set he_oper_centr_freq_seg0_idx $derivedHeCenterSegment 2>/dev/null || true",
+            "hostapd_cli -i wlan2 reload 2>/dev/null || hostapd_cli reload 2>/dev/null || killall -HUP hostapd 2>/dev/null || true"
+        )
+
+        val postRes = executeCommand(postStartCmds.joinToString(" ; "), repository)
+        totalOutput.append(diagLog).append("\n\n").append(postRes.output).append("\n\n")
 
         return RootResult(success, totalOutput.toString().trim())
     }

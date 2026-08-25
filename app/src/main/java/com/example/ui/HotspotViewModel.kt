@@ -648,7 +648,7 @@ class HotspotViewModel(
             displayBands.add("5GHz ($ch)")
         }
         if (band6g.value) {
-            val ch = if (channel6g.value != "Auto") "Ch:${channel6g.value}" else "Auto (ch 37)"
+            val ch = if (channel6g.value != "Auto") "Ch:${channel6g.value}" else "Auto (ACS)"
             displayBands.add("6GHz ($ch)")
         }
         if (displayBands.isEmpty()) {
@@ -843,6 +843,7 @@ class HotspotViewModel(
         }
 
         triggerWifiPopupIfOn(getApplication())
+        checkAndSyncHotspotState(getApplication())
     }
 
     fun openTetheringSettings(context: Context) {
@@ -1116,11 +1117,14 @@ class HotspotViewModel(
                 val has5g = freqs.any { it in 5170..5825 }
                 val maxAllowedBw = if (has6g) 320 else if (has5g) 160 else 40
 
-                val effectiveBwInt = if (detectedBw != null) {
+                val requestedBwStr = channelBandwidth.value.replace("MHz", "").trim()
+                val effectiveBwInt = if (requestedBwStr == "320" && has6g) {
+                    320
+                } else if (detectedBw != null) {
                     val detInt = detectedBw!!.toIntOrNull() ?: 20
                     minOf(detInt, maxAllowedBw)
                 } else {
-                    val userBwInt = channelBandwidth.value.replace("MHz", "").trim().toIntOrNull()
+                    val userBwInt = requestedBwStr.toIntOrNull()
                     if (userBwInt != null) {
                         minOf(userBwInt, maxAllowedBw)
                     } else {
@@ -1251,13 +1255,27 @@ class HotspotViewModel(
 
                             try {
                                 val setChannelMethod = builderClass.getMethod("setChannel", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
-                                if (bandsList.contains("6G")) {
-                                    val ch6g = if (currentCh6g != "Auto") currentCh6g.toIntOrNull() ?: 37 else 37
-                                    setChannelMethod.invoke(builderInstance, ch6g, 4)
+                                val is6g = bandsList.contains("6G")
+                                val is320 = channelBandwidth.value == "320"
+                                
+                                // For 6 GHz: Auto ACS mode or 320 MHz must clear any fixed channel override
+                                if (is6g) {
+                                    if (currentCh6g == "Auto" || is320) {
+                                        // For Auto ACS, do not set any fixed channel override for 6 GHz (allows framework/driver to use ACS channel 0)
+                                    } else {
+                                        val ch6g = currentCh6g.toIntOrNull()
+                                        if (ch6g != null && ch6g > 0) {
+                                            setChannelMethod.invoke(builderInstance, ch6g, 4) // BAND_6GHZ = 4
+                                        }
+                                    }
                                 }
+                                
+                                // For 5 GHz:
                                 if (bandsList.contains("5G") && currentCh5g != "Auto") {
                                     val ch5g = currentCh5g.toIntOrNull()
-                                    if (ch5g != null) setChannelMethod.invoke(builderInstance, ch5g, 2)
+                                    if (ch5g != null && ch5g > 0) {
+                                        setChannelMethod.invoke(builderInstance, ch5g, 2) // BAND_5GHZ = 2
+                                    }
                                 }
                             } catch(e: Exception) {
                                 // Ignore setChannel error
@@ -1284,56 +1302,95 @@ class HotspotViewModel(
                         } catch (e: Exception) {}
                     }
                     
+                    var setBwMethod: java.lang.reflect.Method? = null
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                         try {
-                            val bwVal = try {
-                                val effBw = if (channelBandwidth.value == "Auto" && band6g.value) "160" else channelBandwidth.value
-                                val fieldName = when (effBw) {
-                                    "20" -> "BANDWIDTH_20MHZ"
-                                    "40" -> "BANDWIDTH_40MHZ"
-                                    "80" -> "BANDWIDTH_80MHZ"
-                                    "160" -> "BANDWIDTH_160MHZ"
-                                    "240" -> "BANDWIDTH_240MHZ"
-                                    "320" -> "BANDWIDTH_320MHZ"
-                                    else -> null
-                                }
-                                if (fieldName != null) {
-                                    val softApClass = Class.forName("android.net.wifi.SoftApConfiguration")
-                                    try {
-                                        softApClass.getField(fieldName).getInt(null)
-                                    } catch (e: Exception) {
-                                        if (effBw == "320" || effBw == "240") {
-                                            try { softApClass.getField("BANDWIDTH_160MHZ").getInt(null) } catch (e2: Exception) { 8 }
-                                        } else -1
-                                    }
-                                } else -1
-                            } catch (e: Exception) {
-                                val effBw = if (channelBandwidth.value == "Auto" && band6g.value) "160" else channelBandwidth.value
-                                when (effBw) {
-                                    "20" -> 1
-                                    "40" -> 2
-                                    "80" -> 4
-                                    "160" -> 8
-                                    "240" -> 8
-                                    "320" -> 8 // Fallback to 160MHz base for framework SoftAp
-                                    else -> -1
-                                }
-                            }
-                            if (bwVal != -1) {
-                                try {
-                                    val setBwMethod = builderClass.getMethod("setMaxChannelBandwidth", Int::class.javaPrimitiveType)
-                                    setBwMethod.invoke(builderInstance, bwVal)
-                                } catch (e: Exception) {}
-                            }
+                            setBwMethod = builderClass.getMethod("setMaxChannelBandwidth", Int::class.javaPrimitiveType)
+                        } catch (e: Exception) {}
+                    }
+
+                    fun resolveBandwidthConstant(bw: String): Int {
+                        // Priority 1: SoftApInfo constants (Standard Android 14+ / Wi-Fi 7)
+                        val fieldSoftApInfo = when (bw) {
+                            "320" -> "CHANNEL_WIDTH_320MHZ"
+                            "160" -> "CHANNEL_WIDTH_160MHZ"
+                            "80" -> "CHANNEL_WIDTH_80MHZ"
+                            "40" -> "CHANNEL_WIDTH_40MHZ"
+                            "20" -> "CHANNEL_WIDTH_20MHZ"
+                            else -> null
+                        }
+                        if (fieldSoftApInfo != null) {
+                            try {
+                                val softApInfoClass = Class.forName("android.net.wifi.SoftApInfo")
+                                val field = softApInfoClass.getField(fieldSoftApInfo)
+                                return field.getInt(null)
+                            } catch (e: Exception) {}
+                        }
+
+                        // Priority 2: SoftApConfiguration constants
+                        val fieldSoftApConfig = when (bw) {
+                            "320" -> "BANDWIDTH_320MHZ"
+                            "160" -> "BANDWIDTH_160MHZ"
+                            "80" -> "BANDWIDTH_80MHZ"
+                            "40" -> "BANDWIDTH_40MHZ"
+                            "20" -> "BANDWIDTH_20MHZ"
+                            else -> null
+                        }
+                        if (fieldSoftApConfig != null) {
+                            try {
+                                val softApConfigClass = Class.forName("android.net.wifi.SoftApConfiguration")
+                                val field = softApConfigClass.getField(fieldSoftApConfig)
+                                return field.getInt(null)
+                            } catch (e: Exception) {}
+                        }
+
+                        // Priority 3: SoftApInfo integer values (CHANNEL_WIDTH_320MHZ = 7, CHANNEL_WIDTH_160MHZ = 4, etc.)
+                        return when (bw) {
+                            "320" -> 7 // SoftApInfo.CHANNEL_WIDTH_320MHZ (Never map to 6)
+                            "160" -> 4 // SoftApInfo.CHANNEL_WIDTH_160MHZ
+                            "80" -> 3  // SoftApInfo.CHANNEL_WIDTH_80MHZ
+                            "40" -> 2  // SoftApInfo.CHANNEL_WIDTH_40MHZ
+                            "20" -> 1  // SoftApInfo.CHANNEL_WIDTH_20MHZ
+                            else -> -1
+                        }
+                    }
+
+                    val cleanBw = channelBandwidth.value.replace("MHz", "").trim()
+                    val targetBwConstant = if (cleanBw != "Auto") resolveBandwidthConstant(cleanBw) else -1
+
+                    if (setBwMethod != null && targetBwConstant != -1) {
+                        try {
+                            setBwMethod.invoke(builderInstance, targetBwConstant)
                         } catch (e: Exception) {}
                     }
                     
                     val buildMethod = builderClass.getMethod("build")
-                    val softApConfig = buildMethod.invoke(builderInstance)
-                    
                     val softApConfigClass = Class.forName("android.net.wifi.SoftApConfiguration")
                     val setSoftApConfigMethod = wifiManager.javaClass.getMethod("setSoftApConfiguration", softApConfigClass)
-                    nativeSuccess = setSoftApConfigMethod.invoke(wifiManager, softApConfig) as? Boolean ?: false
+
+                    var softApConfig: Any? = null
+                    try {
+                        softApConfig = buildMethod.invoke(builderInstance)
+                        if (softApConfig != null) {
+                            nativeSuccess = setSoftApConfigMethod.invoke(wifiManager, softApConfig) as? Boolean ?: false
+                        }
+                    } catch (e: Exception) {
+                        nativeSuccess = false
+                    }
+
+                    // Only if the framework explicitly rejected 320 MHz (build failed or setSoftApConfiguration returned false), fallback to 160 MHz
+                    if (!nativeSuccess && cleanBw == "320" && setBwMethod != null) {
+                        try {
+                            val bw160Constant = resolveBandwidthConstant("160")
+                            if (bw160Constant != -1) {
+                                setBwMethod.invoke(builderInstance, bw160Constant)
+                                softApConfig = buildMethod.invoke(builderInstance)
+                                if (softApConfig != null) {
+                                    nativeSuccess = setSoftApConfigMethod.invoke(wifiManager, softApConfig) as? Boolean ?: false
+                                }
+                            }
+                        } catch (e: Exception) {}
+                    }
                 } catch(e: Exception) {
                     nativeSuccess = false
                 }
@@ -1382,14 +1439,80 @@ class HotspotViewModel(
         }
     }
 
+    fun checkAndSyncHotspotState(context: Context = getApplication()) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val isSystemApOn = isSystemHotspotEnabled(context)
+            withContext(Dispatchers.Main) {
+                if (isSystemApOn) {
+                    if (!_isHotspotActive.value) {
+                        _isHotspotActive.value = true
+                        _isHotspotLoading.value = false
+                        if (_activeBands.value.isBlank()) {
+                            _activeBands.value = computeInitialActiveBands(context)
+                        }
+                        startEmbeddedWebServer(context)
+                        refreshConnectedClients()
+                        updateRealActiveChannels()
+                    } else if (!_isWebServerRunning.value) {
+                        startEmbeddedWebServer(context)
+                    }
+                } else {
+                    if (!_isHotspotLoading.value && _isHotspotActive.value) {
+                        _isHotspotActive.value = false
+                        _activeBands.value = ""
+                        _connectedClients.value = emptyList()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun isSystemHotspotEnabled(context: Context): Boolean {
+        try {
+            val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            if (wifiManager != null) {
+                try {
+                    val method = wifiManager.javaClass.getMethod("getWifiApState")
+                    val state = method.invoke(wifiManager) as? Int
+                    if (state == 13 || state == 12) {
+                        return true
+                    }
+                } catch (e: Exception) {
+                    try {
+                        val method = wifiManager.javaClass.getMethod("isWifiApEnabled")
+                        val enabled = method.invoke(wifiManager) as? Boolean
+                        if (enabled == true) return true
+                    } catch (_: Exception) {}
+                }
+            }
+        } catch (_: Exception) {}
+
+        try {
+            if (_isRootAvailable.value == true) {
+                val res = RootExecutor.executePersistentCommand(
+                    "pgrep hostapd || pidof hostapd || iw dev 2>/dev/null | grep -E 'type AP|swlan|ap0|wlan1' || getprop init.svc.hostapd"
+                )
+                if (res.success && res.output.isNotBlank()) {
+                    val out = res.output.trim()
+                    if (out.contains("running") || out.contains("AP") || out.contains("swlan") || out.contains("ap0") || out.contains("wlan") || out.matches(Regex(".*[0-9]+.*"))) {
+                        return true
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        return false
+    }
+
     private fun startClientPolling() {
         clientPollingJob?.cancel()
         clientPollingJob = viewModelScope.launch {
             while (true) {
+                checkAndSyncHotspotState()
                 if (_isHotspotActive.value) {
                     refreshConnectedClients()
                 }
-                delay(3000)
+                delay(2500)
             }
         }
     }
@@ -1693,6 +1816,7 @@ class HotspotViewModel(
                         _isHotspotActive.value = true
                         _activeBands.value = computeInitialActiveBands(context)
                         _lastTerminalOutput.value = result.output
+                        startEmbeddedWebServer(context)
                         refreshConnectedClients()
                         updateRealActiveChannels()
                     } else {
@@ -2005,7 +2129,7 @@ class HotspotViewModel(
         if (_isHotspotActive.value && !_isHotspotLoading.value) {
             viewModelScope.launch {
                 _isHotspotLoading.value = true
-                val chDisplay = if (newChannel == "Auto") "37 (Auto)" else newChannel
+                val chDisplay = if (newChannel == "Auto") "Auto (ACS)" else newChannel
                 _lastTerminalOutput.value = "[INSTANT CHANNEL SHIFT]\nShifting 6GHz Hotspot to Channel $chDisplay..."
 
                 val context = getApplication<Application>()
@@ -2139,9 +2263,11 @@ class HotspotViewModel(
         val maxAllowedBw = if (b6) 320 else if (b5) 160 else 40
         val currentBwVal = channelBandwidth.value.toIntOrNull()
         
-        // If switching to 5/6GHz and current is < 160, reset to 160
-        if ((b5 || b6) && currentBwVal != null && currentBwVal < 160 && channelBandwidth.value != "Auto") {
+        // If switching to 5/6GHz and current is < 80, reset to 160
+        if ((b5 || b6) && currentBwVal != null && currentBwVal < 80 && channelBandwidth.value != "Auto") {
             channelBandwidth.value = "160"
+        } else if (!b5 && !b6 && currentBwVal != null && currentBwVal > 40 && channelBandwidth.value != "Auto") {
+            channelBandwidth.value = "40"
         } else if (currentBwVal != null && currentBwVal > maxAllowedBw && channelBandwidth.value != "Auto") {
             channelBandwidth.value = maxAllowedBw.toString()
         }
@@ -2151,6 +2277,9 @@ class HotspotViewModel(
         }
 
         if (b6) {
+            if (channelBandwidth.value == "320") {
+                channel6g.value = "Auto"
+            }
             val valid6gChs = if (selectedRegion.value == "IN") {
                 listOf("Auto", "1", "37", "85", "117", "149", "181", "213")
             } else {
