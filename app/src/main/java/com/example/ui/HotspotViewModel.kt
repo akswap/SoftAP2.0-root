@@ -225,7 +225,13 @@ class HotspotViewModel(
     
     val channel5g = MutableStateFlow("Auto")
     val channel6g = MutableStateFlow("Auto")
+    val channel6gMode = MutableStateFlow("psc") // "psc" (Lower 6GHz PSC), "full" (Full 6GHz), "manual"
+    val runtimeOperatingChannel = MutableStateFlow("") // Live operating channel e.g. "Ch 37 (6135 MHz)"
     val indoorAp6g = MutableStateFlow(true)
+
+    companion object {
+        val PSC_CHANNELS_6G = listOf(37, 53, 69, 85)
+    }
 
     val showNetworkSourceWarning = MutableStateFlow(false)
 
@@ -244,8 +250,18 @@ class HotspotViewModel(
             if (prefs.contains("channelBandwidth")) prefs.getString("channelBandwidth", null)?.let { channelBandwidth.value = it }
             if (prefs.contains("channel5g")) prefs.getString("channel5g", null)?.let { channel5g.value = it }
             if (prefs.contains("channel6g")) prefs.getString("channel6g", null)?.let { channel6g.value = it }
+            if (prefs.contains("channel6gMode")) prefs.getString("channel6gMode", null)?.let { channel6gMode.value = it }
+            if (channelBandwidth.value == "320") {
+                if (channel6gMode.value == "psc") {
+                    channel6gMode.value = "full"
+                }
+                if (channel6gMode.value == "manual" && channel6g.value !in listOf("Auto", "37", "101", "165")) {
+                    channel6g.value = "37"
+                }
+            }
             if (prefs.contains("indoorAp6g")) indoorAp6g.value = prefs.getBoolean("indoorAp6g", true)
             if (prefs.contains("selectedRegion")) prefs.getString("selectedRegion", null)?.let { selectedRegion.value = it }
+            if (prefs.contains("webServerUserEnabled")) webServerUserEnabled.value = prefs.getBoolean("webServerUserEnabled", false)
         } catch (e: Exception) {
             Log.e("HotspotViewModel", "Failed to load persisted settings", e)
         }
@@ -264,8 +280,10 @@ class HotspotViewModel(
                 .putString("channelBandwidth", channelBandwidth.value)
                 .putString("channel5g", channel5g.value)
                 .putString("channel6g", channel6g.value)
+                .putString("channel6gMode", channel6gMode.value)
                 .putBoolean("indoorAp6g", indoorAp6g.value)
                 .putString("selectedRegion", selectedRegion.value)
+                .putBoolean("webServerUserEnabled", webServerUserEnabled.value)
                 .apply()
         } catch (e: Exception) {
             Log.e("HotspotViewModel", "Failed to save persisted settings", e)
@@ -292,6 +310,7 @@ class HotspotViewModel(
     val vpnStatusLog = _vpnStatusLog.asStateFlow()
 
     // Embedded Router Web Server states
+    val webServerUserEnabled = MutableStateFlow(false)
     private var embeddedServer: EmbeddedRouterServer? = null
     private val _isWebServerRunning = MutableStateFlow(false)
     val isWebServerRunning = _isWebServerRunning.asStateFlow()
@@ -740,7 +759,9 @@ class HotspotViewModel(
                     _isHotspotLoading.value = false
                     context?.let { ctx ->
                         _activeBands.value = computeInitialActiveBands(ctx)
-                        startEmbeddedWebServer(ctx)
+                        if (webServerUserEnabled.value) {
+                            startEmbeddedWebServer(ctx)
+                        }
                     }
                     _lastTerminalOutput.value = "System Hotspot turned ON."
                     refreshConnectedClients()
@@ -751,7 +772,9 @@ class HotspotViewModel(
                     _activeBands.value = ""
                     _lastTerminalOutput.value = "System Hotspot turned OFF."
                     _connectedClients.value = emptyList()
-                    stopEmbeddedWebServer()
+                    if (!webServerUserEnabled.value) {
+                        stopEmbeddedWebServer()
+                    }
                 } else if (state == 14) { // WIFI_AP_STATE_FAILED
                     val wasActive = _isHotspotActive.value
                     _isHotspotActive.value = false
@@ -762,6 +785,9 @@ class HotspotViewModel(
                         _lastTerminalOutput.value = "System Hotspot stopped (State: 14)."
                     } else {
                         _lastTerminalOutput.value = "System Hotspot FAILED to start. OS rejected config."
+                    }
+                    if (!webServerUserEnabled.value) {
+                        stopEmbeddedWebServer()
                     }
                 }
             } else if (action == WifiManager.WIFI_STATE_CHANGED_ACTION || action == WifiManager.NETWORK_STATE_CHANGED_ACTION || action == "android.net.conn.CONNECTIVITY_CHANGE") {
@@ -1141,6 +1167,20 @@ class HotspotViewModel(
                         else -> "Freq:$freq"
                     }
                 }
+                val primary6gFreq = freqs.firstOrNull { it in 5955..7115 }
+                if (primary6gFreq != null) {
+                    val chNum = (primary6gFreq - 5950) / 5
+                    runtimeOperatingChannel.value = "Ch $chNum ($primary6gFreq MHz)"
+                } else if (freqs.isNotEmpty()) {
+                    val f = freqs.first()
+                    val ch = when {
+                        f in 2412..2484 -> ((f - 2412) / 5) + 1
+                        f in 5170..5825 -> ((f - 5170) / 5) + 34
+                        f in 5955..7115 -> (f - 5950) / 5
+                        else -> 0
+                    }
+                    runtimeOperatingChannel.value = if (ch > 0) "Ch $ch ($f MHz)" else "$f MHz"
+                }
                 var wifiGen = standard
                 if (forceWifi7.value == true || mloEnabled.value == true || bandwidth == "320" || bandwidth == "240" || has6g) {
                     wifiGen = "Wi-Fi 7"
@@ -1260,7 +1300,28 @@ class HotspotViewModel(
                                 
                                 // For 6 GHz: Auto ACS mode or 320 MHz must clear any fixed channel override
                                 if (is6g) {
-                                    if (currentCh6g == "Auto" || is320) {
+                                    val candidateList = when (channel6gMode.value) {
+                                        "psc" -> PSC_CHANNELS_6G
+                                        else -> emptyList<Int>()
+                                    }
+                                    if (candidateList.isNotEmpty()) {
+                                        try {
+                                            val setAllowedListMethod = builderClass.getMethod("setAllowedChannelListForBand", Int::class.javaPrimitiveType, List::class.java)
+                                            setAllowedListMethod.invoke(builderInstance, 4, candidateList)
+                                        } catch (e: Exception) {
+                                            try {
+                                                val setAllowedArrayMethod = builderClass.getMethod("setAllowedChannelListForBand", Int::class.javaPrimitiveType, IntArray::class.java)
+                                                setAllowedArrayMethod.invoke(builderInstance, 4, candidateList.toIntArray())
+                                            } catch (e2: Exception) {
+                                                try {
+                                                    val setChannelsMethod = builderClass.getMethod("setChannelsForBand", Int::class.javaPrimitiveType, List::class.java)
+                                                    setChannelsMethod.invoke(builderInstance, 4, candidateList)
+                                                } catch (e3: Exception) {}
+                                            }
+                                        }
+                                    }
+
+                                    if (currentCh6g == "Auto" || is320 || channel6gMode.value != "manual") {
                                         // For Auto ACS, do not set any fixed channel override for 6 GHz (allows framework/driver to use ACS channel 0)
                                     } else {
                                         val ch6g = currentCh6g.toIntOrNull()
@@ -1450,10 +1511,12 @@ class HotspotViewModel(
                         if (_activeBands.value.isBlank()) {
                             _activeBands.value = computeInitialActiveBands(context)
                         }
-                        startEmbeddedWebServer(context)
+                        if (webServerUserEnabled.value) {
+                            startEmbeddedWebServer(context)
+                        }
                         refreshConnectedClients()
                         updateRealActiveChannels()
-                    } else if (!_isWebServerRunning.value) {
+                    } else if (webServerUserEnabled.value && !_isWebServerRunning.value) {
                         startEmbeddedWebServer(context)
                     }
                 } else {
@@ -1805,6 +1868,7 @@ class HotspotViewModel(
                         channelBandwidth = channelBandwidth.value,
                         channel5g = channel5g.value,
                         channel6g = channel6g.value,
+                        channel6gMode = channel6gMode.value,
                         mloEnabled = mloEnabled.value,
                         useTetheringCmd = configWritten,
                         forceWifi7 = forceWifi7.value,
@@ -1816,7 +1880,9 @@ class HotspotViewModel(
                         _isHotspotActive.value = true
                         _activeBands.value = computeInitialActiveBands(context)
                         _lastTerminalOutput.value = result.output
-                        startEmbeddedWebServer(context)
+                        if (webServerUserEnabled.value) {
+                            startEmbeddedWebServer(context)
+                        }
                         refreshConnectedClients()
                         updateRealActiveChannels()
                     } else {
@@ -1898,6 +1964,7 @@ class HotspotViewModel(
                     channelBandwidth = channelBandwidth.value,
                     channel5g = channel5g.value,
                     channel6g = channel6g.value,
+                    channel6gMode = channel6gMode.value,
                     mloEnabled = mloEnabled.value,
                     useTetheringCmd = configWritten,
                     forceWifi7 = forceWifi7.value,
@@ -1908,6 +1975,9 @@ class HotspotViewModel(
                     _isHotspotActive.value = true
                     _activeBands.value = computeInitialActiveBands(context)
                     _lastTerminalOutput.value = "[RESTART COMPLETE]\nHotspot Auto-Started Successfully!\n" + result.output
+                    if (webServerUserEnabled.value) {
+                        startEmbeddedWebServer(context)
+                    }
                     refreshConnectedClients()
                     updateRealActiveChannels()
                 } else {
@@ -2007,6 +2077,7 @@ class HotspotViewModel(
                 channelBandwidth = channelBandwidth.value,
                 channel5g = channel5g.value,
                 channel6g = channel6g.value,
+                channel6gMode = channel6gMode.value,
                 indoorAp6g = indoorAp6g.value,
                 region = selectedRegion.value
             )
@@ -2027,6 +2098,7 @@ class HotspotViewModel(
         channel6g.value = profile.channel6g
         indoorAp6g.value = profile.indoorAp6g
         selectedRegion.value = profile.region
+        channel6gMode.value = if (profile.channelBandwidth == "320" && profile.channel6gMode == "psc") "full" else profile.channel6gMode
     }
 
     fun selectBand2g(active: Boolean) {
@@ -2100,6 +2172,7 @@ class HotspotViewModel(
                         channelBandwidth = channelBandwidth.value,
                         channel5g = channel5g.value,
                         channel6g = channel6g.value,
+                        channel6gMode = channel6gMode.value,
                         mloEnabled = mloEnabled.value,
                         useTetheringCmd = configWritten,
                         forceWifi7 = forceWifi7.value,
@@ -2121,9 +2194,87 @@ class HotspotViewModel(
         }
     }
 
+    fun selectChannel6gMode(newMode: String) {
+        val targetMode = if (channelBandwidth.value == "320" && newMode == "psc") {
+            "full"
+        } else {
+            newMode
+        }
+        if (channel6gMode.value == targetMode) return
+        channel6gMode.value = targetMode
+        if (targetMode != "manual") {
+            channel6g.value = "Auto"
+        } else if (channelBandwidth.value == "320" && channel6g.value !in listOf("Auto", "37", "101", "165")) {
+            channel6g.value = "37"
+        }
+        savePersistedSettings()
+
+        if (_isHotspotActive.value && !_isHotspotLoading.value) {
+            viewModelScope.launch {
+                _isHotspotLoading.value = true
+                val modeLabel = when (channel6gMode.value) {
+                    "psc" -> "Auto ACS (Lower 6 GHz PSC: 37/53/69/85)"
+                    "full" -> "Auto ACS (Full 6 GHz)"
+                    else -> "Manual Channel"
+                }
+                _lastTerminalOutput.value = "[ACS MODE SHIFT]\nApplying 6GHz Mode: $modeLabel..."
+
+                val context = getApplication<Application>()
+                val bandsList = mutableListOf<String>()
+                if (band2g.value) bandsList.add("2G")
+                if (band5g.value) bandsList.add("5G")
+                if (band6g.value) bandsList.add("6G")
+
+                var configWritten = false
+                if (_hasWriteSettingsPermission.value && !forceDirectCli.value) {
+                    configWritten = writeConfigToSystemSettings()
+                }
+
+                if (_isRootAvailable.value == true) {
+                    val result = RootExecutor.configureAndStartSoftAp(
+                        ssid = ssid.value,
+                        pass = password.value,
+                        secType = securityType.value,
+                        bands = bandsList,
+                        region = selectedRegion.value,
+                        channelBandwidth = channelBandwidth.value,
+                        channel5g = channel5g.value,
+                        channel6g = channel6g.value,
+                        channel6gMode = channel6gMode.value,
+                        mloEnabled = mloEnabled.value,
+                        useTetheringCmd = configWritten,
+                        forceWifi7 = forceWifi7.value,
+                        indoorAp6g = indoorAp6g.value,
+                        repository = repository
+                    )
+                    if (result.success) {
+                        _isHotspotActive.value = true
+                        _activeBands.value = computeInitialActiveBands(context)
+                        _lastTerminalOutput.value = "[ACS MODE SUCCESS]\n6GHz Mode applied: $modeLabel\n" + result.output
+                        refreshConnectedClients()
+                        updateRealActiveChannels()
+                    } else {
+                        _lastTerminalOutput.value = "[ACS MODE FAILED]\nFailed: " + result.output
+                    }
+                }
+                _isHotspotLoading.value = false
+            }
+        }
+    }
+
     fun selectChannel6g(newChannel: String) {
-        if (channel6g.value == newChannel) return
-        channel6g.value = newChannel
+        val targetChannel = if (channelBandwidth.value == "320" && newChannel !in listOf("Auto", "37", "101", "165")) {
+            "Auto"
+        } else {
+            newChannel
+        }
+        if (channel6g.value == targetChannel) return
+        channel6g.value = targetChannel
+        if (targetChannel != "Auto" && channel6gMode.value != "manual") {
+            channel6gMode.value = "manual"
+        } else if (targetChannel == "Auto" && channel6gMode.value == "manual") {
+            channel6gMode.value = if (channelBandwidth.value == "320") "full" else "psc"
+        }
         savePersistedSettings()
 
         if (_isHotspotActive.value && !_isHotspotLoading.value) {
@@ -2153,6 +2304,7 @@ class HotspotViewModel(
                         channelBandwidth = channelBandwidth.value,
                         channel5g = channel5g.value,
                         channel6g = newChannel,
+                        channel6gMode = channel6gMode.value,
                         mloEnabled = mloEnabled.value,
                         useTetheringCmd = configWritten,
                         forceWifi7 = forceWifi7.value,
@@ -2206,6 +2358,7 @@ class HotspotViewModel(
                         channelBandwidth = channelBandwidth.value,
                         channel5g = newChannel,
                         channel6g = channel6g.value,
+                        channel6gMode = channel6gMode.value,
                         mloEnabled = mloEnabled.value,
                         useTetheringCmd = configWritten,
                         forceWifi7 = forceWifi7.value,
@@ -2278,15 +2431,22 @@ class HotspotViewModel(
 
         if (b6) {
             if (channelBandwidth.value == "320") {
-                channel6g.value = "Auto"
+                if (channel6gMode.value == "psc") {
+                    channel6gMode.value = "full"
+                }
+                if (channel6gMode.value == "manual" && channel6g.value !in listOf("Auto", "37", "101", "165")) {
+                    channel6g.value = "37"
+                }
             }
-            val valid6gChs = if (selectedRegion.value == "IN") {
+            val valid6gChs = if (channelBandwidth.value == "320") {
+                listOf("Auto", "37", "101", "165")
+            } else if (selectedRegion.value == "IN") {
                 listOf("Auto", "1", "37", "85", "117", "149", "181", "213")
             } else {
                 listOf("Auto", "1", "37", "53", "69", "85", "101", "117", "133", "149", "165", "181", "197", "213")
             }
             if (channel6g.value !in valid6gChs) {
-                channel6g.value = "Auto"
+                channel6g.value = if (channelBandwidth.value == "320" && channel6gMode.value == "manual") "37" else "Auto"
             }
         }
 
@@ -2336,7 +2496,11 @@ class HotspotViewModel(
         }
     }
 
-    fun startEmbeddedWebServer(context: Context) {
+    fun startEmbeddedWebServer(context: Context, userInitiated: Boolean = false) {
+        if (userInitiated) {
+            webServerUserEnabled.value = true
+            prefs.edit().putBoolean("webServerUserEnabled", true).apply()
+        }
         if (RouterWebServerService.isServerRunning()) {
             checkExistingWebServer()
             return
@@ -2357,7 +2521,11 @@ class HotspotViewModel(
         }
     }
 
-    fun stopEmbeddedWebServer() {
+    fun stopEmbeddedWebServer(userInitiated: Boolean = false) {
+        if (userInitiated) {
+            webServerUserEnabled.value = false
+            prefs.edit().putBoolean("webServerUserEnabled", false).apply()
+        }
         try {
             embeddedServer?.stop()
             embeddedServer = null
@@ -2370,10 +2538,10 @@ class HotspotViewModel(
     }
 
     fun toggleEmbeddedWebServer(context: Context) {
-        if (_isWebServerRunning.value || RouterWebServerService.isServerRunning()) {
-            stopEmbeddedWebServer()
+        if (_isWebServerRunning.value || RouterWebServerService.isServerRunning() || webServerUserEnabled.value) {
+            stopEmbeddedWebServer(userInitiated = true)
         } else {
-            startEmbeddedWebServer(context)
+            startEmbeddedWebServer(context, userInitiated = true)
         }
     }
 

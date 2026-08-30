@@ -169,6 +169,7 @@ object RootExecutor {
         channelBandwidth: String,
         channel5g: String,
         channel6g: String,
+        channel6gMode: String = "psc",
         mloEnabled: Boolean,
         useTetheringCmd: Boolean,
         forceWifi7: Boolean = true,
@@ -450,10 +451,25 @@ derivedHeCenterSegment=$derivedHeCenterSegment
                 else -> if (bands.contains("6G")) "-w 320" else ""
             }
 
+            val candidate6gList = when (channel6gMode) {
+                "psc" -> listOf(37, 53, 69, 85)
+                else -> emptyList<Int>()
+            }
+            if (is6g && candidate6gList.isNotEmpty()) {
+                val chsComma = candidate6gList.joinToString(",")
+                val chsSpace = candidate6gList.joinToString(" ")
+                commands.add("setprop wifi.softap.6g.acs_channels \"$chsComma\"")
+                commands.add("setprop vendor.wifi.softap.6g.acs_channels \"$chsComma\"")
+                commands.add("setprop persist.vendor.wifi.softap.6g.acs_channels \"$chsComma\"")
+                commands.add("setprop wifi.softap.acs_channel_list \"$chsSpace\"")
+                commands.add("setprop vendor.wifi.softap.acs_channel_list \"$chsSpace\"")
+            }
+
             // Calculate frequencies from channels
             val freqs = mutableListOf<Int>()
             val explicitCh5g = channel5g != "Auto" && channel5g.toIntOrNull() != null
-            val explicitCh6g = channel6g != "Auto" && channelBandwidth != "320" && channel6g.toIntOrNull() != null
+            val is320 = channelBandwidth == "320"
+            val explicitCh6g = channel6gMode == "manual" && channel6g != "Auto" && channel6g.toIntOrNull() != null
 
             if (explicitCh5g || explicitCh6g) {
                 if (bands.contains("2G")) {
@@ -488,31 +504,53 @@ derivedHeCenterSegment=$derivedHeCenterSegment
         val success = if (hasActivationCommands) anyStartCommandSucceeded else true
 
         // Post-startup hostapd configuration injection
-        val postStartCmds = listOf(
-            "sleep 0.8",
-            "for conf in /data/vendor/wifi/hostapd/hostapd_wlan2.conf /data/vendor/wifi/hostapd/hostapd.conf /data/vendor/wifi/hostapd/hostapd_wlan1.conf /data/vendor/wifi/hostapd/hostapd_ap0.conf; do if [ -f \"\$conf\" ]; then " +
-            "sed -i '/^op_class=/d' \"\$conf\" ; " +
-            "sed -i '/^eht_oper_chwidth=/d' \"\$conf\" ; " +
-            "sed -i '/^eht_oper_centr_freq_seg0_idx=/d' \"\$conf\" ; " +
-            "sed -i '/^he_oper_chwidth=/d' \"\$conf\" ; " +
-            "sed -i '/^he_oper_centr_freq_seg0_idx=/d' \"\$conf\" ; " +
-            "sed -i '/^vht_oper_chwidth=/d' \"\$conf\" ; " +
-            "sed -i '/^vht_oper_centr_freq_seg0_idx=/d' \"\$conf\" ; " +
-            "echo \"op_class=$derivedOpClass\" >> \"\$conf\" ; " +
-            "echo \"eht_oper_chwidth=$derivedEhtOperChwidth\" >> \"\$conf\" ; " +
-            "echo \"eht_oper_centr_freq_seg0_idx=$derivedEhtCenterSegment\" >> \"\$conf\" ; " +
-            "echo \"he_oper_chwidth=$derivedHeOperChwidth\" >> \"\$conf\" ; " +
-            "echo \"he_oper_centr_freq_seg0_idx=$derivedHeCenterSegment\" >> \"\$conf\" ; " +
-            "echo \"vht_oper_chwidth=$derivedHeOperChwidth\" >> \"\$conf\" ; " +
-            "echo \"vht_oper_centr_freq_seg0_idx=$derivedHeCenterSegment\" >> \"\$conf\" ; " +
-            "fi ; done",
-            "hostapd_cli -i wlan2 set op_class $derivedOpClass 2>/dev/null || true",
-            "hostapd_cli -i wlan2 set eht_oper_chwidth $derivedEhtOperChwidth 2>/dev/null || true",
-            "hostapd_cli -i wlan2 set eht_oper_centr_freq_seg0_idx $derivedEhtCenterSegment 2>/dev/null || true",
-            "hostapd_cli -i wlan2 set he_oper_chwidth $derivedHeOperChwidth 2>/dev/null || true",
-            "hostapd_cli -i wlan2 set he_oper_centr_freq_seg0_idx $derivedHeCenterSegment 2>/dev/null || true",
-            "hostapd_cli -i wlan2 reload 2>/dev/null || hostapd_cli reload 2>/dev/null || killall -HUP hostapd 2>/dev/null || true"
-        )
+        val candidate6gList = when (channel6gMode) {
+            "psc" -> listOf(37, 53, 69, 85)
+            else -> emptyList<Int>()
+        }
+        val acsChListStr = candidate6gList.joinToString(" ")
+
+        val isAcsMode = is6g && channel6gMode != "manual"
+        val postStartCmds = if (!isAcsMode) {
+            listOf(
+                "sleep 0.8",
+                "for conf in /data/vendor/wifi/hostapd/hostapd_wlan2.conf /data/vendor/wifi/hostapd/hostapd.conf /data/vendor/wifi/hostapd/hostapd_wlan1.conf /data/vendor/wifi/hostapd/hostapd_ap0.conf; do if [ -f \"\$conf\" ]; then " +
+                "sed -i '/^op_class=/d' \"\$conf\" ; " +
+                "sed -i '/^eht_oper_chwidth=/d' \"\$conf\" ; " +
+                "sed -i '/^eht_oper_centr_freq_seg0_idx=/d' \"\$conf\" ; " +
+                "sed -i '/^he_oper_chwidth=/d' \"\$conf\" ; " +
+                "sed -i '/^he_oper_centr_freq_seg0_idx=/d' \"\$conf\" ; " +
+                "sed -i '/^vht_oper_chwidth=/d' \"\$conf\" ; " +
+                "sed -i '/^vht_oper_centr_freq_seg0_idx=/d' \"\$conf\" ; " +
+                "echo \"op_class=$derivedOpClass\" >> \"\$conf\" ; " +
+                "echo \"eht_oper_chwidth=$derivedEhtOperChwidth\" >> \"\$conf\" ; " +
+                "echo \"eht_oper_centr_freq_seg0_idx=$derivedEhtCenterSegment\" >> \"\$conf\" ; " +
+                "echo \"he_oper_chwidth=$derivedHeOperChwidth\" >> \"\$conf\" ; " +
+                "echo \"he_oper_centr_freq_seg0_idx=$derivedHeCenterSegment\" >> \"\$conf\" ; " +
+                "echo \"vht_oper_chwidth=$derivedHeOperChwidth\" >> \"\$conf\" ; " +
+                "echo \"vht_oper_centr_freq_seg0_idx=$derivedHeCenterSegment\" >> \"\$conf\" ; " +
+                "fi ; done",
+                "hostapd_cli -i wlan2 set op_class $derivedOpClass 2>/dev/null || true",
+                "hostapd_cli -i wlan2 set eht_oper_chwidth $derivedEhtOperChwidth 2>/dev/null || true",
+                "hostapd_cli -i wlan2 set eht_oper_centr_freq_seg0_idx $derivedEhtCenterSegment 2>/dev/null || true",
+                "hostapd_cli -i wlan2 set he_oper_chwidth $derivedHeOperChwidth 2>/dev/null || true",
+                "hostapd_cli -i wlan2 set he_oper_centr_freq_seg0_idx $derivedHeCenterSegment 2>/dev/null || true",
+                "hostapd_cli -i wlan2 reload 2>/dev/null || hostapd_cli reload 2>/dev/null || killall -HUP hostapd 2>/dev/null || true"
+            )
+        } else if (acsChListStr.isNotEmpty()) {
+            // For 320 MHz and 6GHz Auto ACS, do not inject center frequency / chwidth overrides so Android/driver builds chandef natively.
+            // Only set acs_channel_list for candidate filtering.
+            listOf(
+                "sleep 0.8",
+                "for conf in /data/vendor/wifi/hostapd/hostapd_wlan2.conf /data/vendor/wifi/hostapd/hostapd.conf /data/vendor/wifi/hostapd/hostapd_wlan1.conf /data/vendor/wifi/hostapd/hostapd_ap0.conf; do if [ -f \"\$conf\" ]; then " +
+                "sed -i '/^acs_channel_list=/d' \"\$conf\" ; " +
+                "echo \"acs_channel_list=$acsChListStr\" >> \"\$conf\" ; " +
+                "fi ; done",
+                "hostapd_cli -i wlan2 set acs_channel_list \"$acsChListStr\" 2>/dev/null || true"
+            )
+        } else {
+            emptyList()
+        }
 
         val postRes = executeCommand(postStartCmds.joinToString(" ; "), repository)
         totalOutput.append(diagLog).append("\n\n").append(postRes.output).append("\n\n")

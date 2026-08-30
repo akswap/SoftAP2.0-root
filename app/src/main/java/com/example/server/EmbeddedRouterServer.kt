@@ -549,30 +549,8 @@ class EmbeddedRouterServer(
                     getSystemProp("gsm.operator.alpha")
                 }
 
-                val rawType = try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                        tm?.dataNetworkType ?: tm?.networkType
-                    } else {
-                        @Suppress("DEPRECATION")
-                        tm?.networkType
-                    }
-                } catch (e: Exception) { null }
-
-                val typeLabel = when (rawType) {
-                    android.telephony.TelephonyManager.NETWORK_TYPE_NR -> "5G NR"
-                    19 -> "4G LTE+"
-                    android.telephony.TelephonyManager.NETWORK_TYPE_LTE -> "4G LTE"
-                    android.telephony.TelephonyManager.NETWORK_TYPE_HSPAP -> "3G HSPA+"
-                    android.telephony.TelephonyManager.NETWORK_TYPE_HSPA -> "3G HSPA"
-                    android.telephony.TelephonyManager.NETWORK_TYPE_HSUPA -> "3G HSUPA"
-                    android.telephony.TelephonyManager.NETWORK_TYPE_HSDPA -> "3G HSDPA"
-                    android.telephony.TelephonyManager.NETWORK_TYPE_UMTS -> "3G UMTS"
-                    android.telephony.TelephonyManager.NETWORK_TYPE_EDGE -> "2G EDGE"
-                    android.telephony.TelephonyManager.NETWORK_TYPE_GPRS -> "2G GPRS"
-                    android.telephony.TelephonyManager.NETWORK_TYPE_IWLAN -> "Wi-Fi Calling"
-                    android.telephony.TelephonyManager.NETWORK_TYPE_TD_SCDMA -> "3G TD-SCDMA"
-                    else -> getSystemProp("gsm.network.type")?.uppercase()?.takeIf { it.isNotBlank() && it != "UNKNOWN" } ?: "4G LTE"
-                }
+                val netTypeInfo = detectCellularNetworkType(tm)
+                val typeLabel = netTypeInfo.displayNetwork
                 networkType = typeLabel
                 sourceName = "Mobile Data ($typeLabel)"
 
@@ -635,18 +613,8 @@ class EmbeddedRouterServer(
                         ?: getSystemProp("gsm.operator.alpha")?.takeIf { it.isNotBlank() }
                 } catch (e: Exception) { null }
 
-                val rawType = try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) tm?.dataNetworkType ?: tm?.networkType else tm?.networkType
-                } catch (e: Exception) { null }
-
-                val typeLabel = when (rawType) {
-                    20 -> "5G NR"
-                    19 -> "4G LTE+"
-                    13 -> "4G LTE"
-                    15, 10, 9, 8, 3 -> "3G HSPA+"
-                    2, 1 -> "2G EDGE/GPRS"
-                    else -> getSystemProp("gsm.network.type")?.uppercase()?.takeIf { it.isNotBlank() && it != "UNKNOWN" } ?: "4G LTE"
-                }
+                val netTypeInfo = detectCellularNetworkType(tm)
+                val typeLabel = netTypeInfo.displayNetwork
 
                 carrierName = carrierName ?: opName
                 networkType = networkType ?: typeLabel
@@ -1266,6 +1234,8 @@ class EmbeddedRouterServer(
                 "band5g": ${viewModel.band5g.value},
                 "band6g": ${viewModel.band6g.value},
                 "indoorAp6g": ${viewModel.indoorAp6g.value},
+                "channel6gMode": "${viewModel.channel6gMode.value}",
+                "runtimeOperatingChannel": "${viewModel.runtimeOperatingChannel.value}",
                 "band": "${viewModel.getConfiguredBandString()}",
                 "configuredBand": "${viewModel.getConfiguredBandString()}",
                 "activeBand": "$activeBandName",
@@ -1326,6 +1296,11 @@ class EmbeddedRouterServer(
         val ch = parseJsonValue(body, "channel")
         val country = parseJsonValue(body, "country")
         val indoorAp = parseJsonValue(body, "indoorAp6g")
+        val channel6gMode = parseJsonValue(body, "channel6gMode")
+
+        if (!channel6gMode.isNullOrBlank()) {
+            viewModel.channel6gMode.value = channel6gMode
+        }
 
         if (!indoorAp.isNullOrBlank()) {
             viewModel.indoorAp6g.value = indoorAp.toBoolean()
@@ -1338,7 +1313,12 @@ class EmbeddedRouterServer(
             val cleanBw = bw.replace("MHz", "").trim()
             viewModel.channelBandwidth.value = cleanBw
             if (cleanBw == "320" && viewModel.band6g.value) {
-                viewModel.channel6g.value = "Auto"
+                if (viewModel.channel6gMode.value == "psc") {
+                    viewModel.channel6gMode.value = "full"
+                }
+                if (viewModel.channel6g.value !in listOf("Auto", "37", "101", "165")) {
+                    viewModel.channel6g.value = "37"
+                }
             }
         }
         if (!country.isNullOrBlank()) viewModel.selectedRegion.value = country
@@ -1352,9 +1332,6 @@ class EmbeddedRouterServer(
                 }
                 band == "6GHz" || (band.contains("6") && !band.contains("2.4") && !band.contains("5")) -> {
                     viewModel.band2g.value = false; viewModel.band5g.value = false; viewModel.band6g.value = true
-                    if (viewModel.channelBandwidth.value == "320") {
-                        viewModel.channel6g.value = "Auto"
-                    }
                 }
                 band == "Auto" || (band.contains("2.4") && band.contains("5")) -> {
                     viewModel.band2g.value = true; viewModel.band5g.value = true; viewModel.band6g.value = false
@@ -1363,14 +1340,11 @@ class EmbeddedRouterServer(
         }
         if (!ch.isNullOrBlank()) {
             if (viewModel.band6g.value) {
-                if (viewModel.channelBandwidth.value == "320") {
-                    viewModel.selectChannel6g("Auto")
-                } else {
-                    viewModel.selectChannel6g(ch)
-                }
+                viewModel.selectChannel6g(ch)
             } else viewModel.selectChannel5g(ch)
         }
 
+        viewModel.webServerUserEnabled.value = true
         viewModel.savePersistedSettings()
 
         // Apply settings and restart hotspot (Stop -> Wait 2.5s -> Auto Start)
@@ -1488,6 +1462,8 @@ class EmbeddedRouterServer(
     }
 
     private fun handleRestartHotspot(output: DataOutputStream) {
+        viewModel.webServerUserEnabled.value = true
+        viewModel.savePersistedSettings()
         viewModel.restartHotspot()
         sendResponse(output, 200, "OK", "application/json", "{\"success\":true,\"message\":\"Restarting Hotspot: Stop Hotspot -> Wait 2-3s -> Auto Start Hotspot\"}")
     }
@@ -1802,6 +1778,131 @@ class EmbeddedRouterServer(
         sendResponse(output, 200, "OK", "application/json", "{\"success\":true,\"message\":\"Static lease reserved for $name ($ip / $mac)\"}")
     }
 
+    private data class CellularNetworkTypeInfo(
+        val displayNetwork: String, // "5G SA (Standalone)", "5G NSA (Non-Standalone)", "4G LTE+", "4G LTE", etc.
+        val endcStatus: String,     // "Inactive (Pure 5G)", "Active (4G + 5G)", "Inactive"
+        val rawType: String = ""
+    )
+
+    private fun detectCellularNetworkType(tm: android.telephony.TelephonyManager?): CellularNetworkTypeInfo {
+        var dumpsysOutput = ""
+        try {
+            val cmdRes = RootExecutor.executePersistentCommand("dumpsys telephony.registry 2>/dev/null | grep -iE 'mDataNetworkType|mOverrideNetworkType|mNrState|mServiceState|mNetworkType'")
+            dumpsysOutput = cmdRes.output
+            if (dumpsysOutput.isBlank()) {
+                val cmdRes2 = RootExecutor.executePersistentCommand("dumpsys telephony.registry 2>/dev/null | head -n 80")
+                dumpsysOutput = cmdRes2.output
+            }
+        } catch (e: Exception) {
+            Log.e("EmbeddedRouterServer", "Error querying dumpsys telephony.registry", e)
+        }
+
+        // 1. अगर प्योर 5G SA एक्टिव है
+        val isPure5gSa = dumpsysOutput.contains("mDataNetworkType=NR", ignoreCase = true) ||
+                         dumpsysOutput.contains("mDataNetworkType=20") ||
+                         dumpsysOutput.contains("mDataNetworkType=NETWORK_TYPE_NR", ignoreCase = true) ||
+                         dumpsysOutput.contains("dataNetworkType=NR", ignoreCase = true) ||
+                         dumpsysOutput.contains("dataNetworkType=20")
+
+        // 2. अगर 5G NSA एक्टिव है (भले ही डेटा टाइप LTE दिखा रहा हो)
+        val is5gNsa = dumpsysOutput.contains("mNrState=CONNECTED", ignoreCase = true) ||
+                      dumpsysOutput.contains("nrState=CONNECTED", ignoreCase = true) ||
+                      dumpsysOutput.contains("mOverrideNetworkType=NR_NSA", ignoreCase = true) ||
+                      dumpsysOutput.contains("mOverrideNetworkType=NR_ADVANCED", ignoreCase = true) ||
+                      dumpsysOutput.contains("mOverrideNetworkType=NR_NSA_MMWAVE", ignoreCase = true) ||
+                      dumpsysOutput.contains("overrideNetworkType=NR_NSA", ignoreCase = true) ||
+                      dumpsysOutput.contains("overrideNetworkType=NR_ADVANCED", ignoreCase = true) ||
+                      dumpsysOutput.contains("mNrState=NOT_RESTRICTED", ignoreCase = true)
+
+        if (isPure5gSa) {
+            return CellularNetworkTypeInfo(
+                displayNetwork = "5G SA (Standalone)",
+                endcStatus = "Inactive (Pure 5G)",
+                rawType = "NR_SA"
+            )
+        } else if (is5gNsa) {
+            return CellularNetworkTypeInfo(
+                displayNetwork = "5G NSA (Non-Standalone)",
+                endcStatus = "Active (4G + 5G)",
+                rawType = "NR_NSA"
+            )
+        }
+
+        // 3. Fallback to TelephonyManager if dumpsys is unavailable
+        var rawTypeVal = 0
+        try {
+            if (tm != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                rawTypeVal = tm.dataNetworkType
+            } else if (tm != null) {
+                @Suppress("DEPRECATION")
+                rawTypeVal = tm.networkType
+            }
+        } catch (e: Exception) {
+            // Ignore
+        }
+
+        if (rawTypeVal == 20 || rawTypeVal == android.telephony.TelephonyManager.NETWORK_TYPE_NR) {
+            return CellularNetworkTypeInfo(
+                displayNetwork = "5G SA (Standalone)",
+                endcStatus = "Inactive (Pure 5G)",
+                rawType = "NR_SA"
+            )
+        }
+
+        if (dumpsysOutput.contains("mDataNetworkType=19") ||
+            dumpsysOutput.contains("mDataNetworkType=LTE_CA", ignoreCase = true) ||
+            dumpsysOutput.contains("mOverrideNetworkType=LTE_CA", ignoreCase = true) ||
+            rawTypeVal == 19
+        ) {
+            return CellularNetworkTypeInfo(
+                displayNetwork = "4G LTE+",
+                endcStatus = "Inactive",
+                rawType = "LTE_CA"
+            )
+        }
+
+        if (rawTypeVal == 15 || rawTypeVal == 10 || rawTypeVal == 9 || rawTypeVal == 8 || rawTypeVal == 3) {
+            return CellularNetworkTypeInfo(
+                displayNetwork = "3G HSPA+",
+                endcStatus = "Inactive",
+                rawType = "HSPA"
+            )
+        }
+
+        if (rawTypeVal == 2 || rawTypeVal == 1) {
+            return CellularNetworkTypeInfo(
+                displayNetwork = "2G EDGE/GPRS",
+                endcStatus = "Inactive",
+                rawType = "EDGE"
+            )
+        }
+
+        val propType = getSystemProp("gsm.network.type")?.uppercase()?.takeIf { it.isNotBlank() && it != "UNKNOWN" }
+        if (propType != null) {
+            if (propType.contains("NR") || propType.contains("5G")) {
+                return CellularNetworkTypeInfo(
+                    displayNetwork = "5G SA (Standalone)",
+                    endcStatus = "Inactive (Pure 5G)",
+                    rawType = propType
+                )
+            }
+            if (propType.contains("LTE+")) {
+                return CellularNetworkTypeInfo(
+                    displayNetwork = "4G LTE+",
+                    endcStatus = "Inactive",
+                    rawType = propType
+                )
+            }
+        }
+
+        // 4. Default: अगर सिर्फ साधारण 4G है
+        return CellularNetworkTypeInfo(
+            displayNetwork = "4G LTE",
+            endcStatus = "Inactive",
+            rawType = "LTE"
+        )
+    }
+
     private data class CellularIdentityData(
         val imei: String,
         val imsi: String,
@@ -2003,15 +2104,8 @@ class EmbeddedRouterServer(
                     carrierName = opName
                 }
 
-                val rawType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) tm.dataNetworkType else @Suppress("DEPRECATION") tm.networkType
-                networkType = when (rawType) {
-                    20 -> "5G NR"
-                    19 -> "4G LTE+"
-                    13 -> "4G LTE"
-                    15, 10, 9, 8, 3 -> "3G HSPA+"
-                    2, 1 -> "2G EDGE/GPRS"
-                    else -> getSystemProp("gsm.network.type")?.uppercase()?.takeIf { it.isNotBlank() && it != "UNKNOWN" } ?: if (simStatus == "Ready") "4G LTE" else "No Network"
-                }
+                val netTypeInfo = detectCellularNetworkType(tm)
+                networkType = if (simStatus == "Ready") netTypeInfo.displayNetwork else "No Network"
 
                 isRoaming = if (tm.isNetworkRoaming) "Yes" else "No"
 
@@ -2097,16 +2191,16 @@ class EmbeddedRouterServer(
             else -> "Not Detected"
         }
 
-        val rawTypeVal = if (tm != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) tm.dataNetworkType else 0
         val carrierAgg = when {
-            rawTypeVal == 19 || networkType.contains("LTE+") -> "Active (LTE-A CA)"
-            networkType.contains("5G") -> "Active (NR-CA)"
+            networkType.contains("NSA") -> "Active (EN-DC 4G+5G)"
+            networkType.contains("SA") -> "Active (NR-CA / SA)"
+            networkType.contains("LTE+") -> "Active (LTE-A CA)"
             else -> "Single Carrier"
         }
 
         val endcStatus = when {
-            networkType.contains("NSA") || (networkType.contains("5G") && rawTypeVal == 13) -> "EN-DC Active"
-            networkType.contains("5G") || rawTypeVal == 20 -> "5G SA Direct"
+            networkType.contains("SA") -> "Inactive (Pure 5G)"
+            networkType.contains("NSA") -> "Active (4G + 5G)"
             else -> "Inactive"
         }
 
@@ -4621,18 +4715,23 @@ class EmbeddedRouterServer(
                             '<option value="80MHz">80 MHz (High Throughput)</option>' +
                             '<option value="160MHz" selected>160 MHz (Max 160MHz Performance)</option>';
             } else if (selectedBand === '6GHz') {
-                chanHtml += '<option value="Auto">Auto (ACS Mode)</option>';
-                var countryEl = document.getElementById('wifiCountry');
-                var currentCountry = countryEl ? countryEl.value : 'US';
-                var ch6g = (currentCountry === 'IN') ? [37, 85] : [37, 53, 69, 85, 101, 117, 133, 149, 165, 181, 197, 213];
-                ch6g.forEach(function(ch) {
-                    var freq = 5950 + ch * 5;
-                    chanHtml += '<option value="' + ch + '">Channel ' + ch + ' (6 GHz - ' + freq + ' MHz)</option>';
-                });
                 widthHtml = '<option value="Auto">Auto</option>' +
                             '<option value="80MHz">80 MHz</option>' +
                             '<option value="160MHz">160 MHz (Default)</option>' +
-                            '<option value="320MHz">320 MHz (Auto ACS Mode)</option>';
+                            '<option value="320MHz">320 MHz (Wi-Fi 7)</option>';
+
+                var countryEl = document.getElementById('wifiCountry');
+                var currentCountry = countryEl ? countryEl.value : 'US';
+                var targetWidth = (!resetDefaults && currentWidth) ? currentWidth : (widthSelect.value || '160MHz');
+                var is320 = (targetWidth === '320MHz' || targetWidth === '320');
+
+                chanHtml += '<option value="Auto">Auto (ACS Mode)</option>';
+                var ch6g = is320 ? [37, 101, 165] : ((currentCountry === 'IN') ? [37, 85] : [37, 53, 69, 85, 101, 117, 133, 149, 165, 181, 197, 213]);
+                ch6g.forEach(function(ch) {
+                    var freq = 5950 + ch * 5;
+                    var tag = is320 ? ' [320 MHz PSC]' : '';
+                    chanHtml += '<option value="' + ch + '">Channel ' + ch + tag + ' (6 GHz - ' + freq + ' MHz)</option>';
+                });
             } else { // Auto / Dual-Band
                 chanHtml += '<option value="Auto">Auto (Smart Channel Selector)</option>';
                 [1,6,11,36,40,44,149,157,37,65,97].forEach(function(ch) {
@@ -4656,10 +4755,8 @@ class EmbeddedRouterServer(
                 else widthSelect.value = '160MHz';
             }
 
-            if (widthSelect.value === '320MHz' || widthSelect.value === '320') {
-                chanSelect.value = 'Auto';
-            } else if (!resetDefaults && currentChan && Array.from(chanSelect.options).some(function(o) { return o.value === currentChan; })) {
-                chanSelect.value = currentChan;
+            if (!resetDefaults && currentChan && Array.from(chanSelect.options).some(function(o) { return o.value === String(currentChan); })) {
+                chanSelect.value = String(currentChan);
             } else if (Array.from(chanSelect.options).some(function(o) { return o.value === 'Auto'; })) {
                 chanSelect.value = 'Auto';
             } else if (chanSelect.options.length > 0) {
@@ -5275,7 +5372,18 @@ class EmbeddedRouterServer(
                 if (document.getElementById('diagModemStatus')) document.getElementById('diagModemStatus').innerText = data.modemStatus || 'Ready';
                 if (document.getElementById('diagRadioIface')) document.getElementById('diagRadioIface').innerText = data.radioInterface || data.networkType || 'N/A';
                 if (document.getElementById('diagCa')) document.getElementById('diagCa').innerText = data.carrierAgg || 'Single Carrier';
-                if (document.getElementById('diagEndc')) document.getElementById('diagEndc').innerText = data.endcStatus || 'Inactive';
+                if (document.getElementById('diagEndc')) {
+                    var endcVal = data.endcStatus || 'Inactive';
+                    var endcEl = document.getElementById('diagEndc');
+                    endcEl.innerText = endcVal;
+                    if (endcVal.includes('Active')) {
+                        endcEl.style.color = '#22c55e'; // Green for Active 5G NSA (4G + 5G)
+                    } else if (endcVal.includes('Pure 5G')) {
+                        endcEl.style.color = '#38bdf8'; // Cyan for Pure 5G SA
+                    } else {
+                        endcEl.style.color = '#94a3b8'; // Slate for Inactive
+                    }
+                }
                 if (document.getElementById('diagVolte')) document.getElementById('diagVolte').innerText = data.volte || 'Disabled';
                 if (document.getElementById('diagVowifi')) document.getElementById('diagVowifi').innerText = data.vowifi || 'Not Registered';
                 if (document.getElementById('bandStatus')) document.getElementById('bandStatus').innerText = data.bandStatus || 'Auto Selection';

@@ -55,6 +55,8 @@ fun MainHotspotScreen(viewModel: HotspotViewModel) {
     val channelBandwidth by viewModel.channelBandwidth.collectAsState()
     val channel5g by viewModel.channel5g.collectAsState()
     val channel6g by viewModel.channel6g.collectAsState()
+    val channel6gMode by viewModel.channel6gMode.collectAsState()
+    val runtimeOperatingChannel by viewModel.runtimeOperatingChannel.collectAsState()
     val indoorAp6g by viewModel.indoorAp6g.collectAsState()
     val selectedRegion by viewModel.selectedRegion.collectAsState()
     val hasWriteSettingsPermission by viewModel.hasWriteSettingsPermission.collectAsState()
@@ -272,6 +274,7 @@ fun MainHotspotScreen(viewModel: HotspotViewModel) {
                 mloEnabled = mloEnabled,
                 region = selectedRegion,
                 activeBands = activeBands,
+                runtimeOperatingChannel = runtimeOperatingChannel,
                 onToggle = { 
                     if (!isHotspotActive && !band2g && !band5g && !band6g) {
                         showNoBandDialog = true
@@ -312,7 +315,12 @@ fun MainHotspotScreen(viewModel: HotspotViewModel) {
                         onChannelBandwidthChange = {
                             viewModel.channelBandwidth.value = it
                             if (it == "320" && band6g) {
-                                viewModel.channel6g.value = "Auto"
+                                if (viewModel.channel6gMode.value == "psc") {
+                                    viewModel.channel6gMode.value = "full"
+                                }
+                                if (viewModel.channel6g.value !in listOf("Auto", "37", "101", "165")) {
+                                    viewModel.channel6g.value = "37"
+                                }
                             }
                             viewModel.savePersistedSettings()
                         },
@@ -320,6 +328,9 @@ fun MainHotspotScreen(viewModel: HotspotViewModel) {
                         onChannel5gChange = { viewModel.selectChannel5g(it) },
                         channel6g = channel6g,
                         onChannel6gChange = { viewModel.selectChannel6g(it) },
+                        channel6gMode = channel6gMode,
+                        onChannel6gModeChange = { viewModel.selectChannel6gMode(it) },
+                        runtimeOperatingChannel = runtimeOperatingChannel,
                         indoorAp6g = indoorAp6g,
                         onIndoorAp6gChange = { viewModel.setIndoorAp6g(it) },
                         selectedRegion = selectedRegion,
@@ -486,6 +497,7 @@ fun StatusCard(
     mloEnabled: Boolean,
     region: String,
     activeBands: String,
+    runtimeOperatingChannel: String = "",
     onToggle: () -> Unit,
     onRestart: () -> Unit = {}
 ) {
@@ -553,6 +565,15 @@ fun StatusCard(
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        if (runtimeOperatingChannel.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Operating: $runtimeOperatingChannel",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = SystemTerminalGreen
+                            )
+                        }
                     } else if (!isActive) {
                         Spacer(modifier = Modifier.height(3.dp))
                         Text(
@@ -620,6 +641,9 @@ fun HotspotConfigTab(
     onChannel5gChange: (String) -> Unit,
     channel6g: String,
     onChannel6gChange: (String) -> Unit,
+    channel6gMode: String,
+    onChannel6gModeChange: (String) -> Unit,
+    runtimeOperatingChannel: String = "",
     indoorAp6g: Boolean,
     onIndoorAp6gChange: (Boolean) -> Unit,
     selectedRegion: String,
@@ -657,8 +681,10 @@ fun HotspotConfigTab(
     }
     val channels5g = listOf("Auto", "36", "40", "44", "48", "100", "149", "153", "157", "161", "165")
     val bandwidth = channelBandwidth
-    val channels6g = remember(selectedRegion) {
-        if (selectedRegion == "IN") {
+    val channels6g = remember(selectedRegion, bandwidth) {
+        if (bandwidth == "320") {
+            listOf("Auto", "37", "101", "165")
+        } else if (selectedRegion == "IN") {
             listOf("Auto", "37", "85")
         } else {
             listOf("Auto", "37", "53", "69", "85", "101", "117", "133", "149", "165", "181", "197", "213")
@@ -1030,36 +1056,145 @@ fun HotspotConfigTab(
                     }
 
                     if (band6g) {
-                        ExposedDropdownMenuBox(
-                            expanded = expandedChannel6g,
-                            onExpandedChange = { expandedChannel6g = !expandedChannel6g }
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp)
                         ) {
-                            OutlinedTextField(
-                                value = if (channel6g == "Auto") "6GHz Channel: Auto (ACS)" else "6GHz Channel: $channel6g",
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text("6GHz Channel") },
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedChannel6g) },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .menuAnchor(),
-                                colors = TextFieldDefaults.colors(
-                                    focusedContainerColor = Color.Transparent,
-                                    unfocusedContainerColor = Color.Transparent
-                                )
+                            Text(
+                                text = "6 GHz CHANNEL & ACS SELECTION",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                                letterSpacing = 0.5.sp
                             )
-                            ExposedDropdownMenu(
-                                expanded = expandedChannel6g,
-                                onDismissRequest = { expandedChannel6g = false }
-                            ) {
-                                channels6g.forEach { ch ->
-                                    DropdownMenuItem(
-                                        text = { Text(if (ch == "Auto") "Auto (ACS)" else "Channel $ch") },
-                                        onClick = {
-                                            onChannel6gChange(ch)
-                                            expandedChannel6g = false
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            val is320 = channelBandwidth == "320"
+
+                            // 6 GHz Mode Options
+                            val modes = if (is320) {
+                                listOf(
+                                    Triple("full", "Auto ACS (Full 6 GHz)", "Full 6 GHz spectrum (Native 320 MHz)"),
+                                    Triple("manual", "Manual channel", "Select 320 MHz PSC channel (37, 101, 165)")
+                                )
+                            } else {
+                                listOf(
+                                    Triple("psc", "Auto ACS (Lower 6 GHz PSC: 37/53/69/85)", "India / PC-Compatible Lower PSC (Default)"),
+                                    Triple("full", "Auto ACS (Full 6 GHz)", "Full 6 GHz spectrum"),
+                                    Triple("manual", "Manual channel", "Select specific 6 GHz channel")
+                                )
+                            }
+
+                            modes.forEach { (modeKey, modeTitle, modeSubtitle) ->
+                                val isSelected = channel6gMode == modeKey
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                    border = if (isSelected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 3.dp)
+                                        .clickable {
+                                            onChannel6gModeChange(modeKey)
                                         }
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        RadioButton(
+                                            selected = isSelected,
+                                            onClick = { onChannel6gModeChange(modeKey) }
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = modeTitle,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                fontSize = 13.sp,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Text(
+                                                text = modeSubtitle,
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (channel6gMode == "manual") {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                ExposedDropdownMenuBox(
+                                    expanded = expandedChannel6g,
+                                    onExpandedChange = { expandedChannel6g = !expandedChannel6g }
+                                ) {
+                                    OutlinedTextField(
+                                        value = if (channel6g == "Auto") "6GHz Channel: Auto" else if (is320) "6GHz Channel: $channel6g (PSC)" else "6GHz Channel: $channel6g",
+                                        onValueChange = {},
+                                        readOnly = true,
+                                        label = { Text(if (is320) "Manual 320 MHz PSC Channel" else "Manual 6GHz Channel") },
+                                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedChannel6g) },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .menuAnchor(),
+                                        colors = TextFieldDefaults.colors(
+                                            focusedContainerColor = Color.Transparent,
+                                            unfocusedContainerColor = Color.Transparent
+                                        )
                                     )
+                                    ExposedDropdownMenu(
+                                        expanded = expandedChannel6g,
+                                        onDismissRequest = { expandedChannel6g = false }
+                                    ) {
+                                        channels6g.forEach { ch ->
+                                            DropdownMenuItem(
+                                                text = { 
+                                                    Text(
+                                                        if (ch == "Auto") "Auto" 
+                                                        else if (is320) "Channel $ch (PSC - ${5950 + ch.toInt() * 5} MHz)" 
+                                                        else "Channel $ch"
+                                                    ) 
+                                                },
+                                                onClick = {
+                                                    onChannel6gChange(ch)
+                                                    expandedChannel6g = false
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (isHotspotActive && runtimeOperatingChannel.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = SystemTerminalGreen.copy(alpha = 0.12f),
+                                    border = BorderStroke(1.dp, SystemTerminalGreen.copy(alpha = 0.5f)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Surface(
+                                            shape = CircleShape,
+                                            color = SystemTerminalGreen,
+                                            modifier = Modifier.size(8.dp)
+                                        ) {}
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "Runtime Active Channel: $runtimeOperatingChannel",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = SystemTerminalGreen
+                                        )
+                                    }
                                 }
                             }
                         }
